@@ -70,71 +70,53 @@ report_installed_app_versions() {
 
 remove_deepfreeze_and_faronics() {
     local had_error=0
-    local label
     local matched=0
-    local pattern
-    local path
-
-    local -a service_patterns=(
-        "faronics"
-        "deepfreeze"
-        "deep[[:space:]_-]*freeze"
-    )
-
-    local -a known_path_patterns=(
-        "/Applications/Deep Freeze.app"
-        "/Applications/Faronics*.app"
-        "/Library/Application Support/Faronics"
-        "/Library/Application Support/Deep Freeze"
-        "/Library/LaunchDaemons/com.faronics*.plist"
-        "/Library/LaunchDaemons/com.deepfreeze*.plist"
-        "/Library/LaunchAgents/com.faronics*.plist"
-        "/Library/LaunchAgents/com.deepfreeze*.plist"
-        "/Library/Preferences/com.faronics*"
-        "/Library/Preferences/com.deepfreeze*"
-        "/Library/PrivilegedHelperTools/com.faronics*"
-        "/Library/PrivilegedHelperTools/com.deepfreeze*"
-        "/private/var/db/receipts/*faronics*"
-        "/private/var/db/receipts/*deepfreeze*"
-        "$HOME/Library/Application Support/Faronics"
-        "$HOME/Library/Application Support/Deep Freeze"
-        "$HOME/Library/Preferences/com.faronics*"
-        "$HOME/Library/Preferences/com.deepfreeze*"
-    )
+    local line kind value
+    local py_script="${ACID_ROOT}/scripts/py/deepfreeze_targets.py"
 
     print_info "Removing Deep Freeze / Faronics from known service labels and known paths."
 
-    while IFS= read -r label; do
-        [[ -z "$label" ]] && continue
-        for pattern in "${service_patterns[@]}"; do
-            if [[ "$label" =~ $pattern ]]; then
-                matched=1
-                print_info "Stopping launch service: $label"
-                if ! sudo launchctl bootout system "$label" >/dev/null 2>&1; then
-                    sudo launchctl remove "$label" >/dev/null 2>&1 || {
-                        print_warn "Could not fully remove service: $label"
-                        had_error=1
-                    }
-                fi
-                break
-            fi
-        done
-    done < <(launchctl list 2>/dev/null | awk '{print $3}')
-
-    shopt -s nullglob
-    for pattern in "${known_path_patterns[@]}"; do
-        for path in $pattern; do
-            [[ -e "$path" ]] || continue
+    if command -v python3 >/dev/null 2>&1 && [[ -f "$py_script" ]]; then
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            kind="${line%%|*}"
+            value="${line#*|}"
+            [[ -z "$value" ]] && continue
             matched=1
-            print_info "Deleting known path: $path"
-            sudo launchctl unload "$path" >/dev/null 2>&1 || true
-            if ! sudo rm -rf "$path"; then
-                print_warn "Could not delete: $path"
-                had_error=1
-            fi
-        done
-    done
-    shopt -u nullglob
+
+            case "$kind" in
+                LABEL)
+                    print_info "Stopping launch service: $value"
+                    if ! launchctl bootout system "$value" >/dev/null 2>&1; then
+                        launchctl remove "$value" >/dev/null 2>&1 || {
+                            print_warn "Could not fully remove service: $value"
+                            had_error=1
+                        }
+                    fi
+                    ;;
+                PATH)
+                    print_info "Deleting known path: $value"
+                    launchctl unload "$value" >/dev/null 2>&1 || true
+                    if ! rm -rf "$value"; then
+                        print_warn "Could not delete: $value"
+                        had_error=1
+                    fi
+                    ;;
+                RECEIPT)
+                    print_info "Forgetting package receipt: $value"
+                    pkgutil --forget "$value" >/dev/null 2>&1 || true
+                    ;;
+            esac
+        done < <(python3 "$py_script" 2>/dev/null)
+    else
+        # Lightweight fallback if python3 is unavailable.
+        while IFS= read -r value; do
+            [[ -z "$value" ]] && continue
+            matched=1
+            print_info "Stopping launch service: $value"
+            launchctl bootout system "$value" >/dev/null 2>&1 || launchctl remove "$value" >/dev/null 2>&1 || true
+        done < <(launchctl list 2>/dev/null | awk '{print $3}' | grep -Ei 'faronics|deep[[:space:]_-]*freeze|deepfreeze')
+    fi
 
     if [[ "$matched" -eq 0 ]]; then
         print_info "No known Deep Freeze / Faronics service labels or paths found."

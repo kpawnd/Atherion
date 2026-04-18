@@ -10,17 +10,23 @@ require_macos() {
 }
 
 ensure_admin_user() {
-    if ! id -Gn "$USER" | tr ' ' '\n' | grep -qx "admin"; then
+    local check_user="${SUDO_USER:-$USER}"
+
+    if ! id -Gn "$check_user" | tr ' ' '\n' | grep -qx "admin"; then
         print_warn "Current user is not in the admin group."
         print_warn "Power settings and service setup may fail without admin privileges."
         return 0
     fi
 
-    print_ok "Admin group membership detected for user: $USER"
+    print_ok "Admin group membership detected for user: $check_user"
     return 0
 }
 
 ensure_sudo_session() {
+    if [[ "$EUID" -eq 0 ]]; then
+        return 0
+    fi
+
     print_info "Requesting sudo access (needed for system changes)."
     sudo -v
     start_sudo_keepalive
@@ -33,7 +39,7 @@ start_sudo_keepalive() {
 
     (
         while true; do
-            sudo -n true >/dev/null 2>&1 || exit 0
+            /usr/bin/sudo -nv >/dev/null 2>&1 || exit 0
             sleep 60
         done
     ) &
@@ -46,6 +52,64 @@ stop_sudo_keepalive() {
         kill "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
         wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
     fi
+}
+
+ensure_runtime_dependencies() {
+    local had_error=0
+
+    if ! command -v curl >/dev/null 2>&1; then
+        print_warn "curl is missing. Attempting Command Line Tools install path."
+        ensure_git_installed || had_error=1
+    fi
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        if brew_is_healthy; then
+            print_info "Installing missing dependency: python3"
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install python >/dev/null 2>&1 || had_error=1
+        else
+            print_warn "python3 is missing and Homebrew is unavailable right now."
+            had_error=1
+        fi
+    fi
+
+    if [[ "$had_error" -eq 1 ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+attempt_dependency_repair() {
+    local log_file="$1"
+    local repaired=0
+
+    if grep -qiE 'command not found: python3|python3: command not found' "$log_file"; then
+        if brew_is_healthy; then
+            print_info "Auto-fix: installing python3"
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install python >/dev/null 2>&1 && repaired=1
+        fi
+    fi
+
+    if grep -qiE 'command not found: git|git: command not found' "$log_file"; then
+        print_info "Auto-fix: installing git via CLT path"
+        ensure_git_installed && repaired=1
+    fi
+
+    if grep -qiE 'command not found: brew|brew: command not found' "$log_file"; then
+        print_info "Auto-fix: attempting Homebrew install"
+        install_homebrew && repaired=1
+    fi
+
+    if grep -qiE 'homebrew-core is a shallow clone|homebrew-cask is a shallow clone|not writable by your user' "$log_file"; then
+        print_info "Auto-fix: repairing Homebrew environment"
+        repair_homebrew_environment && repaired=1
+    fi
+
+    if [[ "$repaired" -eq 1 ]]; then
+        return 0
+    fi
+
+    return 1
 }
 
 ensure_git_installed() {
@@ -153,6 +217,7 @@ repair_homebrew_shallow_clones() {
 
 repair_homebrew_permissions() {
     local had_error=0
+    local owner_user="${SUDO_USER:-$USER}"
     local zsh_dirs=(
         "/usr/local/share/zsh"
         "/usr/local/share/zsh/site-functions"
@@ -170,11 +235,11 @@ repair_homebrew_permissions() {
 
         if [[ ! -w "$d" ]]; then
             print_info "Fixing write permissions for: $d"
-            sudo chown -R "$USER":admin "$d" >/dev/null 2>&1 || {
+            chown -R "$owner_user":admin "$d" >/dev/null 2>&1 || {
                 print_warn "Could not change ownership for: $d"
                 had_error=1
             }
-            sudo chmod u+w "$d" >/dev/null 2>&1 || {
+            chmod u+w "$d" >/dev/null 2>&1 || {
                 print_warn "Could not set write permission for: $d"
                 had_error=1
             }

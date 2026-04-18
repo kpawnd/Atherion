@@ -2,6 +2,11 @@
 
 set -uo pipefail
 
+if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]] && [[ "$EUID" -ne 0 ]]; then
+    echo "[INFO] Elevating privileges once for this run..."
+    exec sudo -E bash "$0" "$@"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACID_ROOT="$SCRIPT_DIR"
 export ACID_ROOT
@@ -26,14 +31,16 @@ main() {
     run_step "Acquire sudo session" ensure_sudo_session
     run_step "Install or fix git in PATH" ensure_git_installed
     run_step "Install Homebrew" install_homebrew
+    run_step "Ensure runtime dependencies" ensure_runtime_dependencies
     run_step "Report app versions" report_installed_app_versions
-    run_step "Configure firmware password" configure_firmware_password
+    run_step_interactive "Configure firmware password" configure_firmware_password
     run_step "Remove Deep Freeze / Faronics" remove_deepfreeze_and_faronics
     run_step "Create sysmon command" create_sysmon_command
     run_step "Configure bash alias" ensure_bash_alias
     run_step "Configure power management" configure_power_management
     run_step "Install and configure skhd" install_and_configure_skhd
     run_step "Apply performance tweaks" configure_performance_tweaks
+    run_step "Install required software" install_required_software
 
     print_summary
 }
