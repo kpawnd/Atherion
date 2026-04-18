@@ -6,14 +6,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACID_ROOT="$SCRIPT_DIR"
 export ACID_ROOT
 
-# shellcheck source=scripts/lib/common.sh
-source "$SCRIPT_DIR/scripts/lib/common.sh"
-# shellcheck source=scripts/lib/platform_homebrew.sh
-source "$SCRIPT_DIR/scripts/lib/platform_homebrew.sh"
-# shellcheck source=scripts/lib/apps_cleanup.sh
-source "$SCRIPT_DIR/scripts/lib/apps_cleanup.sh"
-# shellcheck source=scripts/lib/features.sh
-source "$SCRIPT_DIR/scripts/lib/features.sh"
+# shellcheck source=scripts/lib/core/ui.sh
+source "$SCRIPT_DIR/scripts/lib/core/ui.sh"
+# shellcheck source=scripts/lib/core/runner.sh
+source "$SCRIPT_DIR/scripts/lib/core/runner.sh"
+# shellcheck source=scripts/lib/core/summary.sh
+source "$SCRIPT_DIR/scripts/lib/core/summary.sh"
+# shellcheck source=scripts/lib/platform/macos.sh
+source "$SCRIPT_DIR/scripts/lib/platform/macos.sh"
+# shellcheck source=scripts/lib/package/homebrew.sh
+source "$SCRIPT_DIR/scripts/lib/package/homebrew.sh"
+# shellcheck source=scripts/lib/apps/inventory.sh
+source "$SCRIPT_DIR/scripts/lib/apps/inventory.sh"
+# shellcheck source=scripts/lib/apps/cleanup_deepfreeze.sh
+source "$SCRIPT_DIR/scripts/lib/apps/cleanup_deepfreeze.sh"
+# shellcheck source=scripts/lib/apps/software_install.sh
+source "$SCRIPT_DIR/scripts/lib/apps/software_install.sh"
+# shellcheck source=scripts/lib/system/config.sh
+source "$SCRIPT_DIR/scripts/lib/system/config.sh"
+# shellcheck source=scripts/lib/system/monitoring.sh
+source "$SCRIPT_DIR/scripts/lib/system/monitoring.sh"
 
 trap 'stop_sudo_keepalive' EXIT
 

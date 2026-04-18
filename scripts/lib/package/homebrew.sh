@@ -1,123 +1,11 @@
 #!/bin/bash
 
-require_macos() {
-    if [[ "$(uname -s)" != "Darwin" ]]; then
-        print_err "This script is for macOS only."
-        return 1
-    fi
-
-    return 0
-}
-
 brew_cmd() {
     if [[ "$EUID" -eq 0 ]] && [[ -n "${SUDO_USER:-}" ]]; then
         sudo -u "$SUDO_USER" brew "$@"
     else
         brew "$@"
     fi
-}
-
-ensure_admin_user() {
-    local check_user="${SUDO_USER:-$USER}"
-
-    if ! id -Gn "$check_user" | tr ' ' '\n' | grep -qx "admin"; then
-        print_warn "Current user is not in the admin group."
-        print_warn "Power settings and service setup may fail without admin privileges."
-        return 0
-    fi
-
-    print_ok "Admin group membership detected for user: $check_user"
-    return 0
-}
-
-ensure_sudo_session() {
-    if [[ "$EUID" -eq 0 ]]; then
-        return 0
-    fi
-
-    print_info "Requesting sudo access (needed for system changes)."
-    sudo -v
-    start_sudo_keepalive
-}
-
-start_sudo_keepalive() {
-    if [[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill -0 "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1; then
-        return 0
-    fi
-
-    (
-        while true; do
-            /usr/bin/sudo -nv >/dev/null 2>&1 || exit 0
-            sleep 60
-        done
-    ) &
-    SUDO_KEEPALIVE_PID=$!
-    export SUDO_KEEPALIVE_PID
-}
-
-stop_sudo_keepalive() {
-    if [[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill -0 "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1; then
-        kill "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
-        wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
-    fi
-}
-
-ensure_runtime_dependencies() {
-    local had_error=0
-
-    if ! command -v curl >/dev/null 2>&1; then
-        print_warn "curl is missing. Attempting Command Line Tools install path."
-        ensure_git_installed || had_error=1
-    fi
-
-    if ! command -v python3 >/dev/null 2>&1; then
-        if brew_is_healthy; then
-            print_info "Installing missing dependency: python3"
-            HOMEBREW_NO_AUTO_UPDATE=1 brew install python >/dev/null 2>&1 || had_error=1
-        else
-            print_warn "python3 is missing and Homebrew is unavailable right now."
-            had_error=1
-        fi
-    fi
-
-    if [[ "$had_error" -eq 1 ]]; then
-        return 1
-    fi
-
-    return 0
-}
-
-attempt_dependency_repair() {
-    local log_file="$1"
-    local repaired=0
-
-    if grep -qiE 'command not found: python3|python3: command not found' "$log_file"; then
-        if brew_is_healthy; then
-            print_info "Auto-fix: installing python3"
-            HOMEBREW_NO_AUTO_UPDATE=1 brew install python >/dev/null 2>&1 && repaired=1
-        fi
-    fi
-
-    if grep -qiE 'command not found: git|git: command not found' "$log_file"; then
-        print_info "Auto-fix: installing git via CLT path"
-        ensure_git_installed && repaired=1
-    fi
-
-    if grep -qiE 'command not found: brew|brew: command not found' "$log_file"; then
-        print_info "Auto-fix: attempting Homebrew install"
-        install_homebrew && repaired=1
-    fi
-
-    if grep -qiE 'homebrew-core is a shallow clone|homebrew-cask is a shallow clone|not writable by your user' "$log_file"; then
-        print_info "Auto-fix: repairing Homebrew environment"
-        repair_homebrew_environment && repaired=1
-    fi
-
-    if [[ "$repaired" -eq 1 ]]; then
-        return 0
-    fi
-
-    return 1
 }
 
 ensure_git_installed() {
@@ -216,11 +104,7 @@ repair_homebrew_shallow_clones() {
         fi
     fi
 
-    if [[ "$had_error" -eq 1 ]]; then
-        return 1
-    fi
-
-    return 0
+    [[ "$had_error" -eq 0 ]]
 }
 
 repair_homebrew_permissions() {
@@ -254,11 +138,7 @@ repair_homebrew_permissions() {
         fi
     done
 
-    if [[ "$had_error" -eq 1 ]]; then
-        return 1
-    fi
-
-    return 0
+    [[ "$had_error" -eq 0 ]]
 }
 
 repair_homebrew_environment() {
@@ -271,11 +151,7 @@ repair_homebrew_environment() {
 
     repair_homebrew_permissions || had_error=1
 
-    if [[ "$had_error" -eq 1 ]]; then
-        return 1
-    fi
-
-    return 0
+    [[ "$had_error" -eq 0 ]]
 }
 
 install_homebrew() {
@@ -324,4 +200,54 @@ install_homebrew() {
 
     print_ok "Homebrew installed successfully."
     return 0
+}
+
+ensure_runtime_dependencies() {
+    local had_error=0
+
+    if ! command -v curl >/dev/null 2>&1; then
+        print_warn "curl is missing. Attempting Command Line Tools install path."
+        ensure_git_installed || had_error=1
+    fi
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        if brew_is_healthy; then
+            print_info "Installing missing dependency: python3"
+            HOMEBREW_NO_AUTO_UPDATE=1 brew_cmd install python >/dev/null 2>&1 || had_error=1
+        else
+            print_warn "python3 is missing and Homebrew is unavailable right now."
+            had_error=1
+        fi
+    fi
+
+    [[ "$had_error" -eq 0 ]]
+}
+
+attempt_dependency_repair() {
+    local log_file="$1"
+    local repaired=0
+
+    if grep -qiE 'command not found: python3|python3: command not found' "$log_file"; then
+        if brew_is_healthy; then
+            print_info "Auto-fix: installing python3"
+            HOMEBREW_NO_AUTO_UPDATE=1 brew_cmd install python >/dev/null 2>&1 && repaired=1
+        fi
+    fi
+
+    if grep -qiE 'command not found: git|git: command not found' "$log_file"; then
+        print_info "Auto-fix: installing git via CLT path"
+        ensure_git_installed && repaired=1
+    fi
+
+    if grep -qiE 'command not found: brew|brew: command not found' "$log_file"; then
+        print_info "Auto-fix: attempting Homebrew install"
+        install_homebrew && repaired=1
+    fi
+
+    if grep -qiE 'homebrew-core is a shallow clone|homebrew-cask is a shallow clone|not writable by your user' "$log_file"; then
+        print_info "Auto-fix: repairing Homebrew environment"
+        repair_homebrew_environment && repaired=1
+    fi
+
+    [[ "$repaired" -eq 1 ]]
 }
