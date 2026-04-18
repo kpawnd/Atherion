@@ -190,6 +190,110 @@ repair_homebrew_shallow_clones() {
     return 0
 }
 
+repair_homebrew_permissions() {
+    local had_error=0
+    local zsh_dirs=(
+        "/usr/local/share/zsh"
+        "/usr/local/share/zsh/site-functions"
+    )
+    local d
+
+    # These paths are common failure points for Intel Homebrew installs.
+    for d in "${zsh_dirs[@]}"; do
+        if [[ ! -d "$d" ]]; then
+            sudo mkdir -p "$d" >/dev/null 2>&1 || {
+                print_warn "Could not create directory: $d"
+                had_error=1
+                continue
+            }
+        fi
+
+        if [[ ! -w "$d" ]]; then
+            print_info "Fixing write permissions for: $d"
+            sudo chown -R "$USER":admin "$d" >/dev/null 2>&1 || {
+                print_warn "Could not change ownership for: $d"
+                had_error=1
+            }
+            sudo chmod u+w "$d" >/dev/null 2>&1 || {
+                print_warn "Could not set write permission for: $d"
+                had_error=1
+            }
+        fi
+    done
+
+    if [[ "$had_error" -eq 1 ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+repair_homebrew_environment() {
+    local had_error=0
+
+    if command -v brew >/dev/null 2>&1; then
+        print_info "Repairing Homebrew tap clone depth and permissions."
+        repair_homebrew_shallow_clones || had_error=1
+    fi
+
+    repair_homebrew_permissions || had_error=1
+
+    if [[ "$had_error" -eq 1 ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+get_app_version() {
+    local app_path="$1"
+    local plist="$app_path/Contents/Info.plist"
+    local version=""
+
+    if [[ ! -f "$plist" ]]; then
+        echo "unknown"
+        return 0
+    fi
+
+    version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null || true)"
+    if [[ -z "$version" ]]; then
+        version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist" 2>/dev/null || true)"
+    fi
+    if [[ -z "$version" ]]; then
+        version="unknown"
+    fi
+
+    echo "$version"
+}
+
+report_installed_app_versions() {
+    local azure_app="/Applications/Azure Data Studio.app"
+    local blender_app="/Applications/Blender.app"
+    local android_app="/Applications/Android Studio.app"
+
+    print_info "Checking installed app versions..."
+
+    if [[ -d "$azure_app" ]]; then
+        print_ok "Azure Data Studio installed. Version: $(get_app_version "$azure_app")"
+    else
+        print_info "Azure Data Studio not installed."
+    fi
+
+    if [[ -d "$blender_app" ]]; then
+        print_ok "Blender installed. Version: $(get_app_version "$blender_app")"
+    else
+        print_info "Blender not installed."
+    fi
+
+    if [[ -d "$android_app" ]]; then
+        print_ok "Android Studio installed. Version: $(get_app_version "$android_app")"
+    else
+        print_info "Android Studio not installed."
+    fi
+
+    return 0
+}
+
 configure_firmware_password() {
     local answer
 
@@ -241,10 +345,11 @@ install_homebrew() {
     fi
 
     print_info "Installing Homebrew..."
+    repair_homebrew_environment || true
     if ! NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
         if command -v brew >/dev/null 2>&1; then
             print_warn "Homebrew install/update failed. Attempting shallow clone repair and retry."
-            repair_homebrew_shallow_clones || true
+            repair_homebrew_environment || true
             brew update --force --quiet >/dev/null 2>&1 || true
         fi
 
@@ -359,7 +464,22 @@ import sys
 root = sys.argv[1]
 pattern = re.compile(r"faronics|deep[\s_-]*freeze|deepfreeze", re.IGNORECASE)
 
+# Skip obvious unrelated app bundles for /Applications by only descending
+# into top-level entries that already look relevant.
+def should_descend(path_root, current_path):
+    if path_root != "/Applications":
+        return True
+    rel = os.path.relpath(current_path, path_root)
+    if rel == ".":
+        return True
+    top = rel.split(os.sep)[0]
+    return bool(pattern.search(top))
+
 for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+    if not should_descend(root, dirpath):
+        dirnames[:] = []
+        continue
+
     sys.stderr.write(f"\r\033[2K\033[0;34m[INFO]\033[0m Scanning path: {dirpath}")
     sys.stderr.flush()
 
@@ -379,6 +499,15 @@ PY
             for entry in "$root"/* "$root"/.*; do
                 [[ ! -e "$entry" ]] && continue
                 [[ "$entry" == "$root/." || "$entry" == "$root/.." ]] && continue
+
+                # Skip obvious unrelated bundles under /Applications.
+                if [[ "$root" == "/Applications" ]]; then
+                    local entry_name
+                    entry_name="$(basename "$entry")"
+                    if [[ ! "$entry_name" =~ [Ff]aronics|[Dd]eep[[:space:]_-]*[Ff]reeze|[Dd]eepfreeze ]]; then
+                        continue
+                    fi
+                fi
 
                 print_info_inline "Scanning path: $entry"
 
@@ -625,6 +754,8 @@ install_and_configure_skhd() {
         return 1
     fi
 
+    repair_homebrew_environment || true
+
     if ! brew_is_healthy; then
         print_warn "Homebrew is unavailable or unhealthy; skipping skhd setup."
         return 1
@@ -637,9 +768,10 @@ install_and_configure_skhd() {
         fi
 
         print_info "Installing skhd from tap..."
-        if ! brew install "$skhd_formula"; then
+        if ! HOMEBREW_NO_AUTO_UPDATE=1 brew install "$skhd_formula"; then
             print_warn "Primary skhd install failed. Trying HEAD build."
-            if ! brew install --HEAD "$skhd_formula"; then
+            repair_homebrew_environment || true
+            if ! HOMEBREW_NO_AUTO_UPDATE=1 brew install --HEAD "$skhd_formula"; then
                 print_warn "Failed to install skhd from koekeishiya/formulae."
                 print_warn "Homebrew cannot find the formula in current repositories."
                 return 1
@@ -756,6 +888,7 @@ main() {
     run_step "Acquire sudo session" ensure_sudo_session
     run_step "Install or fix git in PATH" ensure_git_installed
     run_step "Install Homebrew" install_homebrew
+    run_step "Report app versions" report_installed_app_versions
     run_step "Configure firmware password" configure_firmware_password
     run_step "Remove Deep Freeze / Faronics" remove_deepfreeze_and_faronics
     run_step "Create sysmon command" create_sysmon_command
