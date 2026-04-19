@@ -520,6 +520,61 @@ verify_required_software_present() {
     return 0
 }
 
+monitor_download_progress() {
+    local file_path="$1"
+    local stage_file="$2"
+    local app_name="$3"
+    local start_time
+    local last_size=0
+    local current_size=0
+    local last_time=0
+    local current_time=0
+    local elapsed=0
+    local speed_bps=0
+    local speed_mbs=0
+    local size_mb=0
+    local no_growth_count=0
+
+    start_time=$(date +%s)
+    last_time=$start_time
+
+    while true; do
+        if [[ ! -f "$file_path" ]]; then
+            sleep 0.5
+            continue
+        fi
+
+        current_size=$(stat -f%z "$file_path" 2>/dev/null || echo 0)
+        current_time=$(date +%s)
+        elapsed=$((current_time - last_time))
+
+        if [[ $elapsed -ge 2 ]]; then
+            if [[ $current_size -eq $last_size ]]; then
+                no_growth_count=$((no_growth_count + 1))
+                if [[ $no_growth_count -ge 3 ]]; then
+                    break
+                fi
+            else
+                no_growth_count=0
+                speed_bps=$(( (current_size - last_size) / elapsed ))
+                speed_mbs=$(( speed_bps / 1048576 ))
+                size_mb=$(( current_size / 1048576 ))
+
+                if [[ $speed_mbs -lt 1 && $speed_bps -gt 0 ]]; then
+                    speed_mbs=0
+                fi
+
+                echo "Downloading ${app_name} - ${size_mb}MB @ ${speed_mbs}MB/s" > "$stage_file" 2>/dev/null || true
+            fi
+
+            last_size=$current_size
+            last_time=$current_time
+        fi
+
+        sleep 1
+    done
+}
+
 download_file_optimized() {
     local url="$1"
     local out_file="$2"
@@ -625,10 +680,16 @@ install_android_studio_direct() {
 
     rm -f "$dmg_file" >/dev/null 2>&1 || true
     echo "Downloading Android Studio" > "$stage_file" 2>/dev/null || true
+    monitor_download_progress "$dmg_file" "$stage_file" "Android Studio" &
+    local monitor_pid=$!
     if ! download_file_resilient "$dmg_url" "$dmg_file"; then
+        kill $monitor_pid 2>/dev/null || true
+        wait $monitor_pid 2>/dev/null || true
         print_warn "Android Studio download failed after retries."
         return 1
     fi
+    kill $monitor_pid 2>/dev/null || true
+    wait $monitor_pid 2>/dev/null || true
 
     echo "Verifying download" > "$stage_file" 2>/dev/null || true
     if ! hdiutil verify "$dmg_file" >/dev/null 2>&1; then
@@ -754,10 +815,16 @@ install_azure_data_studio_direct() {
     if [[ "$download_url" == *.dmg ]]; then
         rm -f "$dmg_file" >/dev/null 2>&1 || true
         echo "Downloading Azure Data Studio" > "$stage_file" 2>/dev/null || true
+        monitor_download_progress "$dmg_file" "$stage_file" "Azure Data Studio" &
+        local monitor_pid=$!
         if ! download_file_resilient "$download_url" "$dmg_file"; then
+            kill $monitor_pid 2>/dev/null || true
+            wait $monitor_pid 2>/dev/null || true
             print_warn "Azure Data Studio DMG download failed after retries."
             return 1
         fi
+        kill $monitor_pid 2>/dev/null || true
+        wait $monitor_pid 2>/dev/null || true
 
         echo "Verifying download" > "$stage_file" 2>/dev/null || true
         if ! hdiutil verify "$dmg_file" >/dev/null 2>&1; then
@@ -805,10 +872,16 @@ install_azure_data_studio_direct() {
         mkdir -p "$work_dir" || return 1
 
         echo "Downloading Azure Data Studio" > "$stage_file" 2>/dev/null || true
+        monitor_download_progress "$zip_file" "$stage_file" "Azure Data Studio" &
+        local monitor_pid=$!
         if ! download_file_resilient "$download_url" "$zip_file"; then
+            kill $monitor_pid 2>/dev/null || true
+            wait $monitor_pid 2>/dev/null || true
             print_warn "Azure Data Studio zip download failed after retries."
             return 1
         fi
+        kill $monitor_pid 2>/dev/null || true
+        wait $monitor_pid 2>/dev/null || true
 
         echo "Extracting archive" > "$stage_file" 2>/dev/null || true
         if ! unzip -q "$zip_file" -d "$work_dir"; then
@@ -946,10 +1019,16 @@ install_packet_tracer() {
 
     rm -f "$dmg_file" >/dev/null 2>&1 || true
     echo "Downloading Cisco Packet Tracer" > "$stage_file" 2>/dev/null || true
+    monitor_download_progress "$dmg_file" "$stage_file" "Cisco Packet Tracer" &
+    local monitor_pid=$!
     if ! download_file_resilient "$dmg_url" "$dmg_file"; then
+        kill $monitor_pid 2>/dev/null || true
+        wait $monitor_pid 2>/dev/null || true
         print_warn "Failed to download Cisco Packet Tracer DMG."
         return 1
     fi
+    kill $monitor_pid 2>/dev/null || true
+    wait $monitor_pid 2>/dev/null || true
 
     echo "Verifying download" > "$stage_file" 2>/dev/null || true
     if ! hdiutil verify "$dmg_file" >/dev/null 2>&1; then
