@@ -35,15 +35,19 @@ resolve_azure_data_studio_url() {
         -H 'User-Agent: acidanthera-installer' \
         'https://api.github.com/repos/kpawnd/acidanthera/releases/tags/Azure' 2>/dev/null || true)"
 
-    if [[ -n "$json" ]] && command -v python3 >/dev/null 2>&1; then
-        zip_url="$(echo "$json" | python3 "$PY_LIB_DIR/github_utils.py" azure-asset)"
-        if [[ -n "$zip_url" ]]; then
-            echo "$zip_url"
-            return 0
+    if [[ -n "$json" ]]; then
+        # Ensure PY_LIB_DIR is set (for subshell execution)
+        local py_lib="${PY_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/py}"
+        
+        if command -v python3 >/dev/null 2>&1; then
+            zip_url="$(echo "$json" | python3 "$py_lib/github_utils.py" azure-asset 2>/dev/null)"
+            if [[ -n "$zip_url" && "$zip_url" != "Unknown error" ]]; then
+                echo "$zip_url"
+                return 0
+            fi
         fi
     fi
 
-    echo ""
     return 1
 }
 
@@ -62,6 +66,7 @@ install_azure_data_studio_direct() {
 
     supported_ver="$(get_azure_data_studio_supported_version)"
     if should_skip_direct_install "$target_app" "Azure Data Studio" "$supported_ver"; then
+        echo "Already installed - skipping" > "$stage_file" 2>/dev/null || true
         return 0
     fi
 
@@ -212,6 +217,7 @@ resolve_packet_tracer_dmg_url() {
     local release_tag="${PACKET_TRACER_RELEASE_TAG:-Cisco}"
     local api_url
     local json
+    local dmg_url
 
     if [[ -n "$explicit_url" ]]; then
         echo "$explicit_url"
@@ -219,19 +225,28 @@ resolve_packet_tracer_dmg_url() {
     fi
 
     api_url="https://api.github.com/repos/${release_repo}/releases/tags/${release_tag}"
-    json="$(curl -fsSL "$api_url" 2>/dev/null || true)"
+    json="$(curl -fsSL "$api_url" 2>&1)" || return 1
 
     if [[ -z "$json" ]]; then
-        echo ""
         return 1
     fi
 
-    if command -v python3 >/dev/null 2>&1; then
-        echo "$json" | python3 "$PY_LIB_DIR/github_utils.py" packet-tracer-asset
-        return 0
+    # Check if it's an error response (e.g., rate limited)
+    if echo "$json" | grep -q '"message"'; then
+        return 1
     fi
 
-    echo ""
+    # Ensure PY_LIB_DIR is set (for subshell execution)
+    local py_lib="${PY_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/py}"
+    
+    if command -v python3 >/dev/null 2>&1; then
+        dmg_url="$(echo "$json" | python3 "$py_lib/github_utils.py" packet-tracer-asset 2>&1)"
+        if [[ -n "$dmg_url" && "$dmg_url" != "Unknown error" ]]; then
+            echo "$dmg_url"
+            return 0
+        fi
+    fi
+
     return 1
 }
 
@@ -262,9 +277,10 @@ install_packet_tracer() {
     dmg_url="$(resolve_packet_tracer_dmg_url)"
 
     if [[ -z "$dmg_url" ]]; then
-        print_warn "Could not resolve Cisco Packet Tracer DMG URL."
-        print_warn "Expected a .dmg asset under release tag 'cisco' in the configured GitHub repo."
-        print_warn "Set PACKET_TRACER_DMG_URL manually to override."
+        echo "Failed: Could not resolve Packet Tracer URL" > "$stage_file" 2>/dev/null || true
+        print_warn "Could not resolve Cisco Packet Tracer DMG URL from GitHub release."
+        print_warn "Repository: ${PACKET_TRACER_RELEASE_REPO:-kpawnd/acidanthera}, Tag: ${PACKET_TRACER_RELEASE_TAG:-Cisco}"
+        print_warn "Troubleshooting: Verify GitHub release exists, check network/firewall, or set PACKET_TRACER_DMG_URL manually."
         return 1
     fi
 
@@ -374,6 +390,9 @@ get_android_studio_dmg_url() {
     local json=""
     local dmg_url=""
     
+    # Ensure PY_LIB_DIR is set (for subshell execution)
+    local py_lib="${PY_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/py}"
+    
     # Try GitHub releases first
     if command -v python3 >/dev/null 2>&1; then
         json="$(curl -fsSL \
@@ -381,8 +400,8 @@ get_android_studio_dmg_url() {
             -H 'User-Agent: acidanthera-installer' \
             'https://api.github.com/repos/kpawnd/acidanthera/releases/tags/Android' 2>/dev/null || true)"
         if [[ -n "$json" ]]; then
-            dmg_url="$(echo "$json" | python3 "$PY_LIB_DIR/github_utils.py" android-asset)"
-            if [[ -n "$dmg_url" ]]; then
+            dmg_url="$(echo "$json" | python3 "$py_lib/github_utils.py" android-asset 2>/dev/null)"
+            if [[ -n "$dmg_url" && "$dmg_url" != "Unknown error" ]]; then
                 echo "$dmg_url"
                 return 0
             fi
@@ -393,7 +412,7 @@ get_android_studio_dmg_url() {
     if brew_is_healthy && command -v python3 >/dev/null 2>&1; then
         json="$(brew_cmd info --cask --json=v2 android-studio 2>/dev/null || true)"
         if [[ -n "$json" ]]; then
-            dmg_url="$(echo "$json" | python3 "$PY_LIB_DIR/brew_utils.py" cask-url)"
+            dmg_url="$(echo "$json" | python3 "$py_lib/brew_utils.py" cask-url 2>/dev/null)"
             if [[ -n "$dmg_url" && "$dmg_url" != "" ]]; then
                 echo "$dmg_url"
                 return 0
@@ -529,6 +548,16 @@ install_android_studio_with_fallback() {
         return 0
     fi
 
+    # Check if already installed before trying CDN fallback (version check)
+    if [[ -d "$app_path" ]]; then
+        local installed_ver
+        installed_ver="$(get_app_version "$app_path")"
+        if [[ -n "$installed_ver" && "$installed_ver" != "unknown" ]]; then
+            print_ok "Android Studio already installed. Version: $installed_ver. Skipping reinstall."
+            return 0
+        fi
+    fi
+
     # Fall back to direct DMG download
     print_warn "Homebrew installation failed. Using direct download from Google CDN..."
     dmg_url="$(get_android_studio_dmg_url)"
@@ -548,19 +577,20 @@ install_required_software() {
     local stage_packet="/tmp/install_stage_packet.txt"
 
     print_info "Installing required software set..."
-
     repair_homebrew_environment || true
 
-    reinstall_cask_app "blender" "/Applications/Blender.app" "Blender" "$stage_blender" >/dev/null 2>&1 &
+    # All installations use same pattern: version check first, then install if needed
+    # Running in background with spinner to show progress
+    reinstall_cask_app "blender" "/Applications/Blender.app" "Blender" "$stage_blender" &
     spinner_wait_with_stages $! "Installing Blender" "$stage_blender" || had_error=1
 
-    install_android_studio_with_fallback "$stage_android" >/dev/null 2>&1 &
+    install_android_studio_with_fallback "$stage_android" &
     spinner_wait_with_stages $! "Installing Android Studio" "$stage_android" || had_error=1
 
-    install_azure_data_studio_direct "$stage_azure" >/dev/null 2>&1 &
+    install_azure_data_studio_direct "$stage_azure" &
     spinner_wait_with_stages $! "Installing Azure Data Studio" "$stage_azure" || had_error=1
 
-    install_packet_tracer "$stage_packet" >/dev/null 2>&1 &
+    install_packet_tracer "$stage_packet" &
     spinner_wait_with_stages $! "Installing Cisco Packet Tracer" "$stage_packet" || had_error=1
 
     clear_inline_status
@@ -572,4 +602,49 @@ install_required_software() {
     fi
 
     return 0
+}
+
+# Background wrapper for app installation with spinner
+install_app_bg() {
+    local app_name="$1"
+    local install_method="$2"
+    local cask_token="$3"
+    local app_path="$4"
+    local stage_file="/tmp/install_stage_${app_name// /_}.txt"
+    
+    (
+        install_app "$app_name" "$install_method" "$cask_token" "$app_path" "$stage_file"
+    ) &
+    
+    spinner_wait_with_stages $! "Installing $app_name" "$stage_file" || return 1
+    clear_inline_status
+    return 0
+}
+
+# Unified install function for all applications (runs in foreground, called from background wrapper)
+install_app() {
+    local app_name="$1"
+    local install_method="$2"
+    local cask_token="$3"
+    local app_path="$4"
+    local stage_file="$5"
+    
+    case "$install_method" in
+        homebrew)
+            reinstall_cask_app "$cask_token" "$app_path" "$app_name" "$stage_file"
+            ;;
+        android-fallback)
+            install_android_studio_with_fallback "$stage_file"
+            ;;
+        azure-direct)
+            install_azure_data_studio_direct "$stage_file"
+            ;;
+        packet-tracer)
+            install_packet_tracer "$stage_file"
+            ;;
+        *)
+            print_warn "Unknown install method: $install_method"
+            return 1
+            ;;
+    esac
 }
