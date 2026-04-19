@@ -118,3 +118,96 @@ configure_performance_tweaks() {
     print_ok "Performance tweaks applied."
     return 0
 }
+
+configure_apple_account_restrictions() {
+    local profile_id="com.lab.restrictions.apple-account"
+    local profile_file="/tmp/${profile_id}.mobileconfig"
+    local profile_uuid_payload="9E8D88F7-1E6A-4C80-BBCD-4B5C62784A10"
+    local profile_uuid_root="1A2F4E5C-11A7-47E1-8A27-13C2A4CF7E50"
+
+    print_info "Applying local Apple account and iCloud restrictions profile..."
+
+    cat > "$profile_file" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.applicationaccess</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadIdentifier</key>
+            <string>${profile_id}.payload</string>
+            <key>PayloadUUID</key>
+            <string>${profile_uuid_payload}</string>
+            <key>PayloadDisplayName</key>
+            <string>Lab Apple Account Restrictions</string>
+
+            <key>allowAccountModification</key>
+            <false/>
+            <key>allowCloudDocumentSync</key>
+            <false/>
+            <key>allowCloudDesktopAndDocuments</key>
+            <false/>
+            <key>allowCloudKeychainSync</key>
+            <false/>
+            <key>allowCloudPhotoLibrary</key>
+            <false/>
+            <key>allowCloudMail</key>
+            <false/>
+            <key>allowCloudAddressBook</key>
+            <false/>
+            <key>allowCloudCalendar</key>
+            <false/>
+            <key>allowCloudReminders</key>
+            <false/>
+            <key>allowCloudBookmarks</key>
+            <false/>
+            <key>allowiCloudPrivateRelay</key>
+            <false/>
+            <key>allowHandoff</key>
+            <false/>
+            <key>allowPasswordAutoFill</key>
+            <false/>
+            <key>allowPasswordSharing</key>
+            <false/>
+            <key>allowDiagnosticSubmission</key>
+            <false/>
+        </dict>
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>Lab Apple Restrictions</string>
+    <key>PayloadIdentifier</key>
+    <string>${profile_id}</string>
+    <key>PayloadOrganization</key>
+    <string>Lab</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>${profile_uuid_root}</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
+EOF
+
+    sudo profiles remove -identifier "$profile_id" >/dev/null 2>&1 || true
+    if ! sudo profiles install -type configuration -path "$profile_file" >/dev/null 2>&1; then
+        if ! sudo profiles -I -F "$profile_file" >/dev/null 2>&1; then
+            print_warn "Failed to install Apple account restrictions profile."
+            rm -f "$profile_file" >/dev/null 2>&1 || true
+            return 1
+        fi
+    fi
+
+    rm -f "$profile_file" >/dev/null 2>&1 || true
+    print_ok "Apple account/iCloud restrictions profile installed."
+    return 0
+}

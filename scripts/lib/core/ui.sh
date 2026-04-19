@@ -11,18 +11,22 @@ FAILED_STEPS=0
 FIRMWARE_PASSWORD_CHANGED=0
 
 print_ok() {
+    clear_inline_status
     echo -e "${GREEN}[OK]${NC} $1"
 }
 
 print_warn() {
+    clear_inline_status
     echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
 print_err() {
+    clear_inline_status
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
 print_info() {
+    clear_inline_status
     echo -e "${BLUE}[INFO]${NC} $1"
 }
 

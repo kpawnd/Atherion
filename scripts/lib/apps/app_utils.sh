@@ -115,13 +115,16 @@ download_file_optimized() {
 
     if command -v aria2c >/dev/null 2>&1; then
         aria2c \
+            --quiet=true \
+            --console-log-level=error \
             --file-allocation=none \
             --max-connection-per-server=8 \
             --split=8 \
             --continue=true \
             --retry-wait=3 \
             --max-tries=8 \
-            --summary-interval=1 \
+            --summary-interval=0 \
+            --download-result=hide \
             -o "$(basename "$out_file")" \
             -d "$(dirname "$out_file")" \
             "$url"
@@ -136,7 +139,8 @@ download_file_optimized() {
         --retry-delay 2 \
         --connect-timeout 15 \
         --continue-at - \
-        --progress-bar \
+        --silent \
+        --show-error \
         "$url" \
         --output "$out_file"
 }
@@ -384,7 +388,7 @@ resolve_brew_download_locks_for_token() {
 record_cask_lock() {
     local token="$1"
     local app_path="$2"
-    local lock_dir="$HOME/.acidanthera/cask-locks"
+    local lock_dir="$HOME/.labstate/cask-locks"
     local lock_file="$lock_dir/$token.lock"
     local macos_ver
     local installed_ver

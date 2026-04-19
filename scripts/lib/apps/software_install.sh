@@ -2,6 +2,30 @@
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/app_utils.sh"
 
+resolve_release_repo() {
+    local override_repo="${RELEASES_REPO:-}"
+    local root_dir="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+    local remote_url=""
+    local parsed_repo=""
+
+    if [[ -n "$override_repo" ]]; then
+        echo "$override_repo"
+        return 0
+    fi
+
+    remote_url="$(git -C "$root_dir" config --get remote.origin.url 2>/dev/null || true)"
+    if [[ -n "$remote_url" ]]; then
+        parsed_repo="$(echo "$remote_url" | sed -E 's#^.*github.com[:/]([^/]+/[^/.]+)(\.git)?$#\1#')"
+        if [[ -n "$parsed_repo" && "$parsed_repo" != "$remote_url" ]]; then
+            echo "$parsed_repo"
+            return 0
+        fi
+    fi
+
+    echo ""
+    return 1
+}
+
 get_azure_data_studio_supported_version() {
     local supported_ver="unknown"
     local download_url=""
@@ -14,6 +38,7 @@ get_azure_data_studio_supported_version() {
 
 resolve_azure_data_studio_url() {
     local explicit_url="${AZURE_DATA_STUDIO_URL:-}"
+    local release_repo=""
     local json=""
     local zip_url=""
 
@@ -22,13 +47,17 @@ resolve_azure_data_studio_url() {
         return 0
     fi
 
+    release_repo="$(resolve_release_repo)"
+    if [[ -z "$release_repo" ]]; then
+        return 1
+    fi
+
     json="$(curl -fsSL \
         -H 'Accept: application/vnd.github+json' \
-        -H 'User-Agent: acidanthera-installer' \
-        'https://api.github.com/repos/kpawnd/acidanthera/releases/tags/Azure' 2>/dev/null || true)"
+        -H 'User-Agent: lab-installer' \
+        "https://api.github.com/repos/${release_repo}/releases/tags/Azure" 2>/dev/null || true)"
 
     if [[ -n "$json" ]]; then
-        # Ensure PY_LIB_DIR is set (for subshell execution)
         local py_lib="${PY_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/py}"
         
         if command -v python3 >/dev/null 2>&1; then
@@ -205,7 +234,7 @@ get_packet_tracer_supported_version() {
 
 resolve_packet_tracer_dmg_url() {
     local explicit_url="${PACKET_TRACER_DMG_URL:-}"
-    local release_repo="${PACKET_TRACER_RELEASE_REPO:-kpawnd/acidanthera}"
+    local release_repo="${PACKET_TRACER_RELEASE_REPO:-}"
     local release_tag="${PACKET_TRACER_RELEASE_TAG:-Cisco}"
     local api_url
     local json
@@ -216,6 +245,14 @@ resolve_packet_tracer_dmg_url() {
         return 0
     fi
 
+    if [[ -z "$release_repo" ]]; then
+        release_repo="$(resolve_release_repo)"
+    fi
+
+    if [[ -z "$release_repo" ]]; then
+        return 1
+    fi
+
     api_url="https://api.github.com/repos/${release_repo}/releases/tags/${release_tag}"
     json="$(curl -fsSL "$api_url" 2>&1)" || return 1
 
@@ -223,12 +260,10 @@ resolve_packet_tracer_dmg_url() {
         return 1
     fi
 
-    # Check if it's an error response (e.g., rate limited)
     if echo "$json" | grep -q '"message"'; then
         return 1
     fi
 
-    # Ensure PY_LIB_DIR is set (for subshell execution)
     local py_lib="${PY_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/py}"
     
     if command -v python3 >/dev/null 2>&1; then
@@ -275,8 +310,8 @@ install_packet_tracer() {
     if [[ -z "$dmg_url" ]]; then
         echo "Failed: Could not resolve Packet Tracer URL" > "$stage_file" 2>/dev/null || true
         print_warn "Could not resolve Cisco Packet Tracer DMG URL from GitHub release."
-        print_warn "Repository: ${PACKET_TRACER_RELEASE_REPO:-kpawnd/acidanthera}, Tag: ${PACKET_TRACER_RELEASE_TAG:-Cisco}"
-        print_warn "Troubleshooting: Verify GitHub release exists, check network/firewall, or set PACKET_TRACER_DMG_URL manually."
+        print_warn "Repository: ${PACKET_TRACER_RELEASE_REPO:-<auto-detected>}, Tag: ${PACKET_TRACER_RELEASE_TAG:-Cisco}"
+        print_warn "Verify GitHub release exists, check network/firewall, or set PACKET_TRACER_DMG_URL manually."
         return 1
     fi
 
@@ -362,10 +397,9 @@ install_packet_tracer() {
     fi
 
     echo "Verifying installation" > "$stage_file" 2>/dev/null || true
-    sleep 1  # Give filesystem time to sync
+    sleep 1
     installed_app="$(find_installed_packet_tracer_app)"
     if [[ -z "$installed_app" ]]; then
-        # Log what we found for debugging
         print_warn "Packet Tracer install command completed but app was not found in /Applications."
         find /Applications -maxdepth 3 -type d -name '*[Pp]acket*[Tt]racer*' 2>/dev/null | while read d; do
             print_info "  Found: $d"
@@ -384,6 +418,7 @@ install_packet_tracer() {
 
 get_android_studio_dmg_url() {
     local explicit_url="${ANDROID_STUDIO_DMG_URL:-}"
+    local release_repo=""
     local json=""
     local dmg_url=""
 
@@ -392,15 +427,18 @@ get_android_studio_dmg_url() {
         return 0
     fi
 
-    # Ensure PY_LIB_DIR is set (for subshell execution)
     local py_lib="${PY_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/py}"
 
-    # GitHub release is the only default source for Android Studio.
+    release_repo="$(resolve_release_repo)"
+    if [[ -z "$release_repo" ]]; then
+        return 1
+    fi
+
     if command -v python3 >/dev/null 2>&1; then
         json="$(curl -fsSL \
             -H 'Accept: application/vnd.github+json' \
-            -H 'User-Agent: acidanthera-installer' \
-            'https://api.github.com/repos/kpawnd/acidanthera/releases/tags/Android' 2>/dev/null || true)"
+            -H 'User-Agent: lab-installer' \
+            "https://api.github.com/repos/${release_repo}/releases/tags/Android" 2>/dev/null || true)"
         if [[ -n "$json" ]]; then
             dmg_url="$(echo "$json" | python3 "$py_lib/github_utils.py" android-asset 2>/dev/null)"
             if [[ -n "$dmg_url" && "$dmg_url" != "Unknown error" ]]; then
@@ -499,7 +537,6 @@ install_android_studio_with_fallback() {
     local dmg_url=""
     local supported_ver="unknown"
 
-    # Initialize stage file
     if [[ -n "$stage_file" ]]; then
         echo "Checking app" > "$stage_file"
     fi
@@ -540,8 +577,6 @@ install_required_software() {
     print_info "Installing required software set..."
     repair_homebrew_environment || true
 
-    # All installations use same pattern: version check first, then install if needed
-    # Running in background with spinner to show progress
     reinstall_cask_app "blender" "/Applications/Blender.app" "Blender" "$stage_blender" &
     spinner_wait_with_stages $! "Installing Blender" "$stage_blender" || had_error=1
 

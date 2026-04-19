@@ -4,7 +4,8 @@ remove_deepfreeze_and_faronics() {
     local had_error=0
     local matched=0
     local line kind value
-    local py_script="${ACID_ROOT}/scripts/py/deepfreeze_targets.py"
+    local root_dir="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+    local py_script="${root_dir}/scripts/py/deepfreeze_targets.py"
 
     print_info "Removing Deep Freeze / Faronics from known service labels and known paths."
 

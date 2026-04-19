@@ -22,7 +22,8 @@ get_app_version() {
 }
 
 report_installed_app_versions() {
-    local py_script="${ACID_ROOT}/scripts/py/report_apps.py"
+    local root_dir="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+    local py_script="${root_dir}/scripts/py/report_apps.py"
     local line app_name status version
     local azure_app="/Applications/Azure Data Studio.app"
     local blender_app="/Applications/Blender.app"
