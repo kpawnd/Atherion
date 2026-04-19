@@ -1,9 +1,5 @@
 #!/bin/bash
 
-#
-# Shared utilities for macOS app installation
-#
-
 PY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/py"
 
 # Check if installation should be skipped based on version matching
@@ -145,11 +141,27 @@ download_file_optimized() {
         --output "$out_file"
 }
 
-# Monitor download progress in background
+# Get file size from URL via HEAD request
+get_remote_file_size() {
+    local url="$1"
+    local content_length=""
+    
+    content_length="$(curl -fsI -L "$url" 2>/dev/null | grep -i "content-length:" | tail -1 | awk '{print $2}' | tr -d '\r')"
+    if [[ -n "$content_length" && "$content_length" =~ ^[0-9]+$ ]]; then
+        echo "$content_length"
+        return 0
+    fi
+    
+    echo "0"
+    return 1
+}
+
+# Monitor download progress in background with ETA
 monitor_download_progress() {
     local file_path="$1"
     local stage_file="$2"
     local app_name="$3"
+    local total_size="$4"
     local start_time
     local last_size=0
     local current_size=0
@@ -157,11 +169,14 @@ monitor_download_progress() {
     local current_time=0
     local elapsed=0
     local speed_bps=0
-    local speed_mbs=0
-    local speed_kbs=0
-    local size_mb=0
-    local no_growth_count=0
     local speed_display=""
+    local size_mb=0
+    local total_mb=0
+    local percent=0
+    local remaining_bytes=0
+    local eta_seconds=0
+    local eta_display=""
+    local no_growth_count=0
 
     start_time=$(date +%s)
     last_time=$start_time
@@ -187,15 +202,31 @@ monitor_download_progress() {
                 speed_bps=$(( (current_size - last_size) / elapsed ))
                 size_mb=$(( current_size / 1048576 ))
 
+                # Calculate speed display
                 if [[ $speed_bps -ge 1048576 ]]; then
-                    speed_mbs=$(( speed_bps / 1048576 ))
-                    speed_display="${speed_mbs}MB/s"
+                    speed_display="$((speed_bps / 1048576))MB/s"
                 else
-                    speed_kbs=$(( speed_bps / 1024 ))
-                    speed_display="${speed_kbs}KB/s"
+                    speed_display="$((speed_bps / 1024))KB/s"
                 fi
 
-                echo "Downloading ${app_name} - ${size_mb}MB @ ${speed_display}" > "$stage_file" 2>/dev/null || true
+                # Calculate ETA if total size is known
+                eta_display=""
+                if [[ -n "$total_size" && $total_size -gt 0 && $speed_bps -gt 0 ]]; then
+                    total_mb=$((total_size / 1048576))
+                    percent=$(( (current_size * 100) / total_size ))
+                    remaining_bytes=$(( total_size - current_size ))
+                    eta_seconds=$(( remaining_bytes / speed_bps ))
+                    
+                    if [[ $eta_seconds -gt 3600 ]]; then
+                        eta_display=" - ETA $(( eta_seconds / 3600 ))h$((( eta_seconds % 3600 ) / 60))m ($percent%)"
+                    elif [[ $eta_seconds -gt 60 ]]; then
+                        eta_display=" - ETA $((eta_seconds / 60))m$((eta_seconds % 60))s ($percent%)"
+                    else
+                        eta_display=" - ETA ${eta_seconds}s ($percent%)"
+                    fi
+                fi
+
+                echo "Downloading ${app_name} - ${size_mb}MB @ ${speed_display}${eta_display}" > "$stage_file" 2>/dev/null || true
             fi
 
             last_size=$current_size

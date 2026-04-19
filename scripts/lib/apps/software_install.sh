@@ -1,15 +1,6 @@
 #!/bin/bash
 
-#
-# Software installation orchestrator for Acidanthera
-# Handles installation of required development tools via Homebrew and GitHub releases
-#
-
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/app_utils.sh"
-
-# ============================================================================
-# Azure Data Studio Installation
-# ============================================================================
 
 get_azure_data_studio_supported_version() {
     local supported_ver="unknown"
@@ -86,7 +77,7 @@ install_azure_data_studio_direct() {
     if [[ "$download_url" == *.dmg ]]; then
         rm -f "$dmg_file" >/dev/null 2>&1 || true
         echo "Downloading Azure Data Studio" > "$stage_file" 2>/dev/null || true
-        monitor_download_progress "$dmg_file" "$stage_file" "Azure Data Studio" &
+        monitor_download_progress "$dmg_file" "$stage_file" "Azure Data Studio" "$(get_remote_file_size "$download_url")" &
         local monitor_pid=$!
         if ! download_file_resilient "$download_url" "$dmg_file"; then
             kill $monitor_pid 2>/dev/null || true
@@ -144,7 +135,7 @@ install_azure_data_studio_direct() {
         mkdir -p "$work_dir" || return 1
 
         echo "Downloading Azure Data Studio" > "$stage_file" 2>/dev/null || true
-        monitor_download_progress "$zip_file" "$stage_file" "Azure Data Studio" &
+        monitor_download_progress "$zip_file" "$stage_file" "Azure Data Studio" "$(get_remote_file_size "$download_url")" &
         local monitor_pid=$!
         if ! download_file_resilient "$download_url" "$zip_file"; then
             kill $monitor_pid 2>/dev/null || true
@@ -279,7 +270,7 @@ install_packet_tracer() {
 
     rm -f "$dmg_file" >/dev/null 2>&1 || true
     echo "Downloading Cisco Packet Tracer" > "$stage_file" 2>/dev/null || true
-    monitor_download_progress "$dmg_file" "$stage_file" "Cisco Packet Tracer" &
+    monitor_download_progress "$dmg_file" "$stage_file" "Cisco Packet Tracer" "$(get_remote_file_size "$dmg_url")" &
     local monitor_pid=$!
     if ! download_file_resilient "$dmg_url" "$dmg_file"; then
         kill $monitor_pid 2>/dev/null || true
@@ -375,6 +366,22 @@ install_packet_tracer() {
 # ============================================================================
 
 get_android_studio_dmg_url() {
+    local brew_url=""
+    local json=""
+    
+    # Try to get Homebrew's actual download URL (usually from faster CDN)
+    if brew_is_healthy && command -v python3 >/dev/null 2>&1; then
+        json="$(brew_cmd info --cask --json=v2 android-studio 2>/dev/null || true)"
+        if [[ -n "$json" ]]; then
+            brew_url="$(echo "$json" | python3 "$PY_LIB_DIR/brew_utils.py" cask-url)"
+            if [[ -n "$brew_url" && "$brew_url" != "" ]]; then
+                echo "$brew_url"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Fall back to Google's CDN as last resort
     echo "https://edgedl.me.gvt1.com/android/studio/install/2025.3.3.7/android-studio-panda3-patch1-mac.dmg"
 }
 
@@ -385,17 +392,26 @@ install_android_studio_direct_dmg() {
     local app_path=""
     local target_app="/Applications/Android Studio.app"
     local stage_file="$2"
+    local file_size
 
-    print_info "Downloading Android Studio DMG from Google CDN..."
+    if [[ "$dmg_url" == *edgedl.me* ]]; then
+        print_info "Downloading Android Studio from Google CDN..."
+    else
+        print_info "Downloading Android Studio..."
+    fi
     
     rm -f "$dmg_file" >/dev/null 2>&1 || true
-    echo "Downloading Android Studio (CDN)" > "$stage_file" 2>/dev/null || true
-    monitor_download_progress "$dmg_file" "$stage_file" "Android Studio" &
+    
+    echo "Resolving file size" > "$stage_file" 2>/dev/null || true
+    file_size="$(get_remote_file_size "$dmg_url")"
+    
+    echo "Downloading Android Studio" > "$stage_file" 2>/dev/null || true
+    monitor_download_progress "$dmg_file" "$stage_file" "Android Studio" "$file_size" &
     local monitor_pid=$!
     if ! download_file_resilient "$dmg_url" "$dmg_file"; then
         kill $monitor_pid 2>/dev/null || true
         wait $monitor_pid 2>/dev/null || true
-        print_warn "Android Studio CDN download failed."
+        print_warn "Android Studio download failed."
         return 1
     fi
     kill $monitor_pid 2>/dev/null || true
