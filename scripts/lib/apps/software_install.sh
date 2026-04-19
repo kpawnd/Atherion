@@ -311,6 +311,7 @@ run_packet_tracer_installer_unattended() {
     local installer_bin=""
     local app_name=""
     local version=""
+    local install_dir=""
 
     installer_bin="$(find "$app_path/Contents/MacOS" -maxdepth 1 -type f -perm -111 | head -n 1)"
     if [[ -z "$installer_bin" ]]; then
@@ -323,12 +324,14 @@ run_packet_tracer_installer_unattended() {
         version="9.0.0"
     fi
 
-    print_info "Running Packet Tracer unattended installer..."
+    install_dir="/Applications/Cisco Packet Tracer $version"
+    mkdir -p "$install_dir" || true
+
     if sudo "$installer_bin" install \
-        --root "/Applications/Cisco Packet Tracer $version" \
+        --root "$install_dir" \
         --accept-licenses \
         --accept-messages \
-        --confirm-command >>"$install_log" 2>&1; then
+        --confirm-command >"$install_log" 2>&1; then
         return 0
     fi
 
@@ -403,6 +406,7 @@ reinstall_cask_app() {
     local token="$1"
     local app_path="$2"
     local display_name="$3"
+    local stage_file="${4:-}"
     local supported_ver
     local installed_ver=""
     local attempt=1
@@ -413,6 +417,7 @@ reinstall_cask_app() {
         return 1
     fi
 
+    echo "Checking supported version" > "$stage_file" 2>/dev/null || true
     supported_ver="$(get_brew_cask_version "$token")"
     if [[ "$supported_ver" == "unknown" ]]; then
         print_warn "$display_name cask metadata is unavailable for this Homebrew/macOS state."
@@ -428,6 +433,7 @@ reinstall_cask_app() {
         fi
     fi
 
+    echo "Removing old version" > "$stage_file" 2>/dev/null || true
     print_info "Removing old $display_name version (if present)..."
     brew_cmd uninstall --cask --force "$token" >/dev/null 2>&1 || true
     if [[ -d "$app_path" ]]; then
@@ -438,12 +444,14 @@ reinstall_cask_app() {
 
     while [[ "$attempt" -le "$max_attempts" ]]; do
         resolve_brew_download_locks_for_token "$token" || true
+        echo "Installing ($attempt/$max_attempts)" > "$stage_file" 2>/dev/null || true
         print_info "Installing latest supported $display_name... (attempt $attempt/$max_attempts)"
         if HOMEBREW_NO_AUTO_UPDATE=1 brew_cmd install --cask "$token"; then
             break
         fi
 
         if [[ "$attempt" -lt "$max_attempts" ]]; then
+            echo "Repairing Homebrew" > "$stage_file" 2>/dev/null || true
             print_warn "Install attempt failed for $display_name. Repairing Homebrew and retrying once."
             resolve_brew_download_locks_for_token "$token" || true
             repair_homebrew_environment || true
@@ -458,6 +466,7 @@ reinstall_cask_app() {
         return 1
     fi
 
+    echo "Verifying installation" > "$stage_file" 2>/dev/null || true
     if [[ -d "$app_path" ]]; then
         print_ok "$display_name installed. Version: $(get_app_version "$app_path")"
     else
@@ -594,6 +603,7 @@ install_android_studio_direct() {
     local app_path=""
     local target_app="/Applications/Android Studio.app"
     local supported_ver="unknown"
+    local stage_file="${1:-}"
 
     print_info "Installing Android Studio..."
 
@@ -602,6 +612,7 @@ install_android_studio_direct() {
         return 0
     fi
 
+    echo "Resolving download URL" > "$stage_file" 2>/dev/null || true
     dmg_url="$(resolve_android_studio_dmg_url)"
     if [[ -z "$dmg_url" ]]; then
         print_warn "Could not resolve Android Studio DMG URL."
@@ -609,11 +620,13 @@ install_android_studio_direct() {
     fi
 
     rm -f "$dmg_file" >/dev/null 2>&1 || true
+    echo "Downloading Android Studio" > "$stage_file" 2>/dev/null || true
     if ! download_file_resilient "$dmg_url" "$dmg_file"; then
         print_warn "Android Studio download failed after retries."
         return 1
     fi
 
+    echo "Verifying download" > "$stage_file" 2>/dev/null || true
     if ! hdiutil verify "$dmg_file" >/dev/null 2>&1; then
         print_warn "Downloaded Android Studio DMG failed integrity verification."
         return 1
@@ -622,12 +635,14 @@ install_android_studio_direct() {
     rm -rf "$mount_point" >/dev/null 2>&1 || true
     mkdir -p "$mount_point" || return 1
 
+    echo "Mounting DMG" > "$stage_file" 2>/dev/null || true
     if ! hdiutil attach "$dmg_file" -quiet -nobrowse -mountpoint "$mount_point" >/dev/null 2>&1; then
         print_warn "Failed to mount Android Studio DMG."
         rm -f "$dmg_file" >/dev/null 2>&1 || true
         return 1
     fi
 
+    echo "Locating app bundle" > "$stage_file" 2>/dev/null || true
     app_path="$(find "$mount_point" -maxdepth 4 -type d -name 'Android Studio.app' | head -n 1)"
     if [[ -z "$app_path" ]]; then
         app_path="$(find "$mount_point" -maxdepth 4 -type d -name '*.app' | head -n 1)"
@@ -640,6 +655,7 @@ install_android_studio_direct() {
         return 1
     fi
 
+    echo "Copying to /Applications" > "$stage_file" 2>/dev/null || true
     sudo rm -rf "$target_app" >/dev/null 2>&1 || true
     if ! sudo ditto "$app_path" "$target_app" >/dev/null 2>&1; then
         print_warn "Failed to copy Android Studio to /Applications."
@@ -648,6 +664,7 @@ install_android_studio_direct() {
         return 1
     fi
 
+    echo "Cleaning up" > "$stage_file" 2>/dev/null || true
     hdiutil detach "$mount_point" -force >/dev/null 2>&1 || true
     rm -f "$dmg_file" >/dev/null 2>&1 || true
 
@@ -712,6 +729,7 @@ install_azure_data_studio_direct() {
     local zip_file="/tmp/azure_data_studio.zip"
     local app_path=""
     local supported_ver="unknown"
+    local stage_file="${1:-}"
 
     print_info "Installing Azure Data Studio..."
 
@@ -720,6 +738,7 @@ install_azure_data_studio_direct() {
         return 0
     fi
 
+    echo "Resolving download URL" > "$stage_file" 2>/dev/null || true
     download_url="$(resolve_azure_data_studio_url)"
     if [[ -z "$download_url" ]]; then
         print_warn "Could not resolve Azure Data Studio download URL."
@@ -730,11 +749,13 @@ install_azure_data_studio_direct() {
 
     if [[ "$download_url" == *.dmg ]]; then
         rm -f "$dmg_file" >/dev/null 2>&1 || true
+        echo "Downloading Azure Data Studio" > "$stage_file" 2>/dev/null || true
         if ! download_file_resilient "$download_url" "$dmg_file"; then
             print_warn "Azure Data Studio DMG download failed after retries."
             return 1
         fi
 
+        echo "Verifying download" > "$stage_file" 2>/dev/null || true
         if ! hdiutil verify "$dmg_file" >/dev/null 2>&1; then
             print_warn "Downloaded Azure Data Studio DMG failed integrity verification."
             return 1
@@ -743,12 +764,14 @@ install_azure_data_studio_direct() {
         rm -rf "$mount_point" >/dev/null 2>&1 || true
         mkdir -p "$mount_point" || return 1
 
+        echo "Mounting DMG" > "$stage_file" 2>/dev/null || true
         if ! hdiutil attach "$dmg_file" -quiet -nobrowse -mountpoint "$mount_point" >/dev/null 2>&1; then
             print_warn "Failed to mount Azure Data Studio DMG."
             rm -f "$dmg_file" >/dev/null 2>&1 || true
             return 1
         fi
 
+        echo "Locating app bundle" > "$stage_file" 2>/dev/null || true
         app_path="$(find "$mount_point" -maxdepth 4 -type d -name 'Azure Data Studio.app' | head -n 1)"
         if [[ -z "$app_path" ]]; then
             app_path="$(find "$mount_point" -maxdepth 4 -type d -name '*.app' | head -n 1)"
@@ -761,6 +784,7 @@ install_azure_data_studio_direct() {
             return 1
         fi
 
+        echo "Copying to /Applications" > "$stage_file" 2>/dev/null || true
         if ! sudo ditto "$app_path" "$target_app" >/dev/null 2>&1; then
             print_warn "Failed to copy Azure Data Studio to /Applications."
             hdiutil detach "$mount_point" -force >/dev/null 2>&1 || true
@@ -768,6 +792,7 @@ install_azure_data_studio_direct() {
             return 1
         fi
 
+        echo "Cleaning up" > "$stage_file" 2>/dev/null || true
         hdiutil detach "$mount_point" -force >/dev/null 2>&1 || true
         rm -f "$dmg_file" >/dev/null 2>&1 || true
     elif [[ "$download_url" == *.zip ]]; then
@@ -775,11 +800,13 @@ install_azure_data_studio_direct() {
         rm -rf "$work_dir" >/dev/null 2>&1 || true
         mkdir -p "$work_dir" || return 1
 
+        echo "Downloading Azure Data Studio" > "$stage_file" 2>/dev/null || true
         if ! download_file_resilient "$download_url" "$zip_file"; then
             print_warn "Azure Data Studio zip download failed after retries."
             return 1
         fi
 
+        echo "Extracting archive" > "$stage_file" 2>/dev/null || true
         if ! unzip -q "$zip_file" -d "$work_dir"; then
             print_warn "Failed to extract Azure Data Studio zip archive."
             rm -f "$zip_file" >/dev/null 2>&1 || true
@@ -787,6 +814,7 @@ install_azure_data_studio_direct() {
             return 1
         fi
 
+        echo "Locating app bundle" > "$stage_file" 2>/dev/null || true
         app_path="$(find "$work_dir" -maxdepth 2 -type d -name '*.app' | head -n 1)"
 
         if [[ -z "$app_path" ]]; then
@@ -796,6 +824,7 @@ install_azure_data_studio_direct() {
             return 1
         fi
 
+        echo "Copying to /Applications" > "$stage_file" 2>/dev/null || true
         if ! ditto "$app_path" "$target_app"; then
             print_warn "Failed to copy Azure Data Studio to /Applications."
             rm -f "$zip_file" >/dev/null 2>&1 || true
@@ -803,6 +832,7 @@ install_azure_data_studio_direct() {
             return 1
         fi
 
+        echo "Cleaning up" > "$stage_file" 2>/dev/null || true
         rm -f "$zip_file" >/dev/null 2>&1 || true
         rm -rf "$work_dir" >/dev/null 2>&1 || true
     else
@@ -884,6 +914,7 @@ install_packet_tracer() {
     local installer_bundle="0"
     local installed_app
     local supported_ver="unknown"
+    local stage_file="${1:-}"
 
     print_info "Installing Cisco Packet Tracer..."
 
@@ -897,6 +928,7 @@ install_packet_tracer() {
         print_info "Cisco Packet Tracer not currently installed. Proceeding with installation."
     fi
 
+    echo "Resolving download URL" > "$stage_file" 2>/dev/null || true
     dmg_url="$(resolve_packet_tracer_dmg_url)"
 
     if [[ -z "$dmg_url" ]]; then
@@ -909,11 +941,13 @@ install_packet_tracer() {
     print_info "Using Packet Tracer DMG URL: $dmg_url"
 
     rm -f "$dmg_file" >/dev/null 2>&1 || true
+    echo "Downloading Cisco Packet Tracer" > "$stage_file" 2>/dev/null || true
     if ! download_file_resilient "$dmg_url" "$dmg_file"; then
         print_warn "Failed to download Cisco Packet Tracer DMG."
         return 1
     fi
 
+    echo "Verifying download" > "$stage_file" 2>/dev/null || true
     if ! hdiutil verify "$dmg_file" >/dev/null 2>&1; then
         print_warn "Downloaded Cisco Packet Tracer DMG failed integrity verification."
         rm -f "$dmg_file" >/dev/null 2>&1 || true
@@ -923,7 +957,7 @@ install_packet_tracer() {
     rm -rf "$mount_point" >/dev/null 2>&1 || true
     mkdir -p "$mount_point" || return 1
 
-    print_info "Mounting DMG..."
+    echo "Mounting DMG" > "$stage_file" 2>/dev/null || true
     if ! hdiutil attach "$dmg_file" -quiet -nobrowse -readonly -mountpoint "$mount_point" >/dev/null 2>&1; then
         local attach_output=""
         local detected_mount=""
@@ -938,6 +972,7 @@ install_packet_tracer() {
         fi
     fi
 
+    echo "Locating app bundle" > "$stage_file" 2>/dev/null || true
     pkg_path="$(find "$mount_point" -maxdepth 5 -name '*.pkg' | head -n 1)"
     mpkg_path="$(find "$mount_point" -maxdepth 5 -name '*.mpkg' | head -n 1)"
     app_path="$(find "$mount_point" -maxdepth 5 -name '*Packet*Tracer*.app' | head -n 1)"
@@ -955,18 +990,15 @@ install_packet_tracer() {
     if [[ -n "$app_path" ]]; then
         if [[ "$installer_bundle" == "1" ]]; then
             : >"$install_log"
+            echo "Running installer" > "$stage_file" 2>/dev/null || true
             if ! run_packet_tracer_installer_unattended "$app_path" "$install_log" "$mount_point"; then
                 print_warn "Packet Tracer unattended installation failed."
-                if [[ -f "$install_log" ]]; then
-                    print_warn "Installer log (tail):"
-                    tail -n 40 "$install_log"
-                fi
                 hdiutil detach "$mount_point" -force >/dev/null 2>&1 || true
                 rm -f "$dmg_file" >/dev/null 2>&1 || true
                 return 1
             fi
         else
-            print_info "Copying Packet Tracer app bundle to /Applications"
+            echo "Copying app bundle to /Applications" > "$stage_file" 2>/dev/null || true
             sudo rm -rf "/Applications/$(basename "$app_path")" >/dev/null 2>&1 || true
             if ! sudo ditto "$app_path" "/Applications/$(basename "$app_path")" >/dev/null 2>&1; then
                 print_warn "Packet Tracer app copy failed."
@@ -982,18 +1014,16 @@ install_packet_tracer() {
         return 1
     fi
 
+    echo "Verifying installation" > "$stage_file" 2>/dev/null || true
     installed_app="$(find_installed_packet_tracer_app)"
     if [[ -z "$installed_app" ]]; then
         print_warn "Packet Tracer install command completed but app was not found in /Applications."
-        if [[ -f "$install_log" ]]; then
-            print_warn "Installer log (tail):"
-            tail -n 40 "$install_log"
-        fi
         hdiutil detach "$mount_point" -force >/dev/null 2>&1 || true
         rm -f "$dmg_file" >/dev/null 2>&1 || true
         return 1
     fi
 
+    echo "Cleaning up" > "$stage_file" 2>/dev/null || true
     hdiutil detach "$mount_point" -force >/dev/null 2>&1 || true
     rm -f "$dmg_file" >/dev/null 2>&1 || true
     print_ok "Cisco Packet Tracer installation completed: $installed_app"
@@ -1002,30 +1032,29 @@ install_packet_tracer() {
 
 install_required_software() {
     local had_error=0
-    local total_tasks=4
-    local current_task=0
+    local stage_blender="/tmp/install_stage_blender.txt"
+    local stage_android="/tmp/install_stage_android.txt"
+    local stage_azure="/tmp/install_stage_azure.txt"
+    local stage_packet="/tmp/install_stage_packet.txt"
 
     print_info "Installing required software set..."
 
     repair_homebrew_environment || true
 
-    current_task=$((current_task + 1))
-    announce_install_stage "$current_task" "$total_tasks" "Installing Blender"
-    reinstall_cask_app "blender" "/Applications/Blender.app" "Blender" || had_error=1
+    reinstall_cask_app "blender" "/Applications/Blender.app" "Blender" "$stage_blender" &
+    spinner_wait_with_stages $! "Installing Blender" "$stage_blender" || had_error=1
 
-    current_task=$((current_task + 1))
-    announce_install_stage "$current_task" "$total_tasks" "Installing Android Studio"
-    install_android_studio_direct || had_error=1
+    install_android_studio_direct "$stage_android" &
+    spinner_wait_with_stages $! "Installing Android Studio" "$stage_android" || had_error=1
 
-    current_task=$((current_task + 1))
-    announce_install_stage "$current_task" "$total_tasks" "Installing Azure Data Studio"
-    install_azure_data_studio_direct || had_error=1
+    install_azure_data_studio_direct "$stage_azure" &
+    spinner_wait_with_stages $! "Installing Azure Data Studio" "$stage_azure" || had_error=1
 
-    current_task=$((current_task + 1))
-    announce_install_stage "$current_task" "$total_tasks" "Installing Cisco Packet Tracer"
-    install_packet_tracer || had_error=1
+    install_packet_tracer "$stage_packet" &
+    spinner_wait_with_stages $! "Installing Cisco Packet Tracer" "$stage_packet" || had_error=1
 
     clear_inline_status
+    rm -f "$stage_blender" "$stage_android" "$stage_azure" "$stage_packet" >/dev/null 2>&1 || true
     verify_required_software_present || had_error=1
 
     if [[ "$had_error" -eq 1 ]]; then

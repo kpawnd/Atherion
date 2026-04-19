@@ -31,7 +31,6 @@ get_cpu_temp() {
 
 print_once() {
     echo "System Monitor - $(date)"
-    echo "=============================================="
     echo "Host: $(scutil --get ComputerName 2>/dev/null || hostname)"
     echo "Uptime: $(uptime | sed 's/^ *//')"
     echo "CPU Temp: $(get_cpu_temp)"
@@ -71,9 +70,10 @@ EOF
 ensure_bash_alias() {
     local bashrc="$HOME/.bashrc"
     local bash_profile="$HOME/.bash_profile"
+    local zshrc="$HOME/.zshrc"
     local alias_line='alias sysmon="$HOME/.local/bin/sysmon"'
 
-    touch "$bashrc" "$bash_profile" || return 1
+    touch "$bashrc" "$bash_profile" "$zshrc" || return 1
 
     if ! grep -Fxq "$alias_line" "$bashrc"; then
         echo "$alias_line" >> "$bashrc" || return 1
@@ -87,6 +87,13 @@ ensure_bash_alias() {
         print_ok "Added sysmon alias to $bash_profile"
     else
         print_ok "sysmon alias already exists in $bash_profile"
+    fi
+
+    if ! grep -Fxq "$alias_line" "$zshrc"; then
+        echo "$alias_line" >> "$zshrc" || return 1
+        print_ok "Added sysmon alias to $zshrc"
+    else
+        print_ok "sysmon alias already exists in $zshrc"
     fi
 
     return 0

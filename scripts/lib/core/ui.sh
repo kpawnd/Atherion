@@ -54,6 +54,41 @@ spinner_wait() {
     return $status
 }
 
+spinner_wait_with_stages() {
+    local pid="$1"
+    local label="$2"
+    local stage_file="$3"
+    local frames='|/-\\'
+    local i=0
+    local current_stage=""
+    local last_stage=""
+
+    if [[ ! -t 1 ]]; then
+        wait "$pid"
+        return $?
+    fi
+
+    while kill -0 "$pid" >/dev/null 2>&1; do
+        if [[ -f "$stage_file" ]]; then
+            current_stage="$(tail -n 1 "$stage_file" 2>/dev/null || echo '')"
+            if [[ -n "$current_stage" && "$current_stage" != "$last_stage" ]]; then
+                last_stage="$current_stage"
+            fi
+        fi
+        if [[ -n "$last_stage" ]]; then
+            printf "\r\033[2K${BLUE}[RUN]${NC} %s - %s [%c]" "$label" "$last_stage" "${frames:i++%${#frames}:1}"
+        else
+            printf "\r\033[2K${BLUE}[RUN]${NC} %s [%c]" "$label" "${frames:i++%${#frames}:1}"
+        fi
+        sleep 0.12
+    done
+
+    wait "$pid"
+    local status=$?
+    clear_inline_status
+    return $status
+}
+
 render_app_install_progress() {
     local current="$1"
     local total="$2"
