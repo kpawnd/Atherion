@@ -304,12 +304,31 @@ is_packet_tracer_installer_bundle() {
     return 1
 }
 
-run_packet_tracer_installer_gui() {
+run_packet_tracer_installer_unattended() {
     local app_path="$1"
+    local install_log="$2"
+    local mount_point="$3"
+    local installer_bin=""
+    local app_name=""
+    local version=""
 
-    print_info "Opening Packet Tracer installer GUI for manual installation..."
-    if open "$app_path"; then
-        print_info "Packet Tracer installer opened. Please complete the installation manually."
+    installer_bin="$(find "$app_path/Contents/MacOS" -maxdepth 1 -type f -perm -111 | head -n 1)"
+    if [[ -z "$installer_bin" ]]; then
+        return 1
+    fi
+
+    app_name="$(basename "$app_path" .app)"
+    version="$(printf '%s' "$app_name" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+    if [[ -z "$version" ]]; then
+        version="9.0.0"
+    fi
+
+    print_info "Running Packet Tracer unattended installer..."
+    if sudo "$installer_bin" install \
+        --root "/Applications/Cisco Packet Tracer $version" \
+        --accept-licenses \
+        --accept-messages \
+        --confirm-command >>"$install_log" 2>&1; then
         return 0
     fi
 
@@ -935,15 +954,17 @@ install_packet_tracer() {
 
     if [[ -n "$app_path" ]]; then
         if [[ "$installer_bundle" == "1" ]]; then
-            print_info "Opening Packet Tracer installer GUI"
-            if ! run_packet_tracer_installer_gui "$app_path"; then
-                print_warn "Failed to open Packet Tracer installer."
+            : >"$install_log"
+            if ! run_packet_tracer_installer_unattended "$app_path" "$install_log" "$mount_point"; then
+                print_warn "Packet Tracer unattended installation failed."
+                if [[ -f "$install_log" ]]; then
+                    print_warn "Installer log (tail):"
+                    tail -n 40 "$install_log"
+                fi
                 hdiutil detach "$mount_point" -force >/dev/null 2>&1 || true
                 rm -f "$dmg_file" >/dev/null 2>&1 || true
                 return 1
             fi
-            print_info "Waiting for user to complete installation..."
-            sleep 5
         else
             print_info "Copying Packet Tracer app bundle to /Applications"
             sudo rm -rf "/Applications/$(basename "$app_path")" >/dev/null 2>&1 || true
