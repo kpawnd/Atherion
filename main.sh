@@ -45,6 +45,7 @@ main() {
     run_step "Report app versions" report_installed_app_versions
     run_step_interactive "Configure firmware password" configure_firmware_password
     run_step "Remove Deep Freeze / Faronics" remove_deepfreeze_and_faronics
+    run_step "Cleanup legacy sysmon artifacts" cleanup_legacy_sysmon_artifacts
     run_step "Create sysmon command" create_sysmon_command
     run_step "Configure bash alias" ensure_bash_alias
     run_step "Configure power management" configure_power_management

@@ -575,6 +575,23 @@ ensure_runtime_dependencies() {
         fi
     fi
 
+    # Install monitoring stack used by sysmon wrapper.
+    if brew_is_healthy; then
+        if ! brew_cmd list --formula btop >/dev/null 2>&1; then
+            print_info "Installing monitoring dependency: btop"
+            network_stage_update "btop" "--" "estimating" "phase=brew-install"
+            HOMEBREW_NO_AUTO_UPDATE=1 brew_cmd install btop >/dev/null 2>&1 || had_error=1
+        fi
+
+        if ! brew_cmd list --formula osx-cpu-temp >/dev/null 2>&1; then
+            print_info "Installing monitoring dependency: osx-cpu-temp"
+            network_stage_update "osx-cpu-temp" "--" "estimating" "phase=brew-install"
+            HOMEBREW_NO_AUTO_UPDATE=1 brew_cmd install osx-cpu-temp >/dev/null 2>&1 || had_error=1
+        fi
+    else
+        print_warn "Homebrew unavailable, skipping btop/osx-cpu-temp install."
+    fi
+
     [[ "$had_error" -eq 0 ]]
 }
 

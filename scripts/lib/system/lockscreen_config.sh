@@ -116,15 +116,20 @@ configure_lockscreen_background() {
             print_warn "Could not update lockscreen cache for $current_user"
         fi
 
-        if [[ "${LOCKSCREEN_SET_WALLPAPER:-0}" == "1" ]]; then
-            print_info "LOCKSCREEN_SET_WALLPAPER=1 set; also updating desktop wallpaper..."
+        local set_wallpaper="${LOCKSCREEN_SET_WALLPAPER:-1}"
+        if [[ "${LOCKSCREEN_SKIP_WALLPAPER:-0}" == "1" ]]; then
+            set_wallpaper="0"
+        fi
+
+        if [[ "$set_wallpaper" == "1" ]]; then
+            print_info "Updating desktop wallpaper (default enabled; set LOCKSCREEN_SKIP_WALLPAPER=1 to disable)..."
             if apply_wallpaper_for_user "$current_user" "$persistent_image"; then
                 print_info "Wallpaper updated for user: $current_user"
             else
                 print_warn "Could not update wallpaper in GUI session for $current_user"
             fi
         else
-            print_info "Desktop wallpaper unchanged (set LOCKSCREEN_SET_WALLPAPER=1 to enable)."
+            print_info "Desktop wallpaper unchanged (LOCKSCREEN_SKIP_WALLPAPER=1)."
         fi
     fi
 

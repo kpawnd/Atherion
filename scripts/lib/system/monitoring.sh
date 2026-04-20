@@ -1,5 +1,26 @@
 #!/bin/bash
 
+cleanup_legacy_sysmon_artifacts() {
+    local target_dir="$HOME/.local/bin"
+    local removed=0
+
+    rm -f "$target_dir/sysmon.old" "$target_dir/sysmon.bak" "$target_dir/sysmon-legacy" >/dev/null 2>&1 && removed=1 || true
+    rm -rf "$HOME/.cache/sysmon" "$HOME/.config/sysmon-legacy" >/dev/null 2>&1 && removed=1 || true
+
+    if [[ -L "$target_dir/sysmon" && ! -e "$target_dir/sysmon" ]]; then
+        rm -f "$target_dir/sysmon" >/dev/null 2>&1 || true
+        removed=1
+    fi
+
+    if [[ "$removed" -eq 1 ]]; then
+        print_ok "Cleaned legacy sysmon artifacts"
+    else
+        print_ok "No legacy sysmon artifacts found"
+    fi
+
+    return 0
+}
+
 create_sysmon_command() {
     local target_dir="$HOME/.local/bin"
     local target_file="$target_dir/sysmon"
@@ -100,6 +121,31 @@ print_once() {
     done
     printf "${BOLD}${CYAN}╚════════════════════════════╝${NC}\n"
 }
+
+show_help() {
+    cat <<USAGE
+Usage: sysmon [--once] [--legacy] [--help]
+
+Default:
+  Launches btop when available (recommended monitor).
+
+Options:
+  --once    Print one snapshot and exit.
+  --legacy  Force legacy built-in monitor loop.
+  --help    Show this help message.
+USAGE
+}
+
+if [[ "${1:-}" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+if [[ "${1:-}" != "--once" && "${1:-}" != "--legacy" ]]; then
+    if command -v btop >/dev/null 2>&1; then
+        exec btop
+    fi
+fi
 
 if [[ "${1:-}" == "--once" ]]; then
     print_once
