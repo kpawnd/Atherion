@@ -5,7 +5,7 @@
 # Supports both SIP-enabled and SIP-disabled (OCLP) systems
 
 configure_lockscreen_background() {
-    local image_url="${LOCKSCREEN_IMAGE_URL:-https://wall-r2.tasw.qzz.io/original_lockscreen11.png}"
+    local image_url="${LOCKSCREEN_IMAGE_URL:-https://wall.tasw.qzz.io/mac.png}"
     local image_file="/tmp/lockscreen_bg.png"
     local lock_plist="/Library/Preferences/com.apple.loginwindow"
     
@@ -136,7 +136,7 @@ EOF
 
 # MDM profile approach for persistent cross-version lockscreen
 create_lockscreen_mdm_profile() {
-    local image_url="${LOCKSCREEN_IMAGE_URL:-https://wall-r2.tasw.qzz.io/original_lockscreen11.png}"
+    local image_url="${LOCKSCREEN_IMAGE_URL:-https://wall.tasw.qzz.io/mac.png}"
     local profile_id="com.lab.lockscreen.background"
     local profile_file="/tmp/${profile_id}.mobileconfig"
     local profile_uuid="A7B2C3D4-E5F6-47G8-H9I0-J1K2L3M4N5O6"
