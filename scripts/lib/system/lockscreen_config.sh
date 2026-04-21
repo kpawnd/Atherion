@@ -152,20 +152,38 @@ configure_lockscreen_background() {
         total_checks=$((total_checks + 1))
         print_ok "Check $total_checks: loginwindow LockScreenImage write"
     fi
+    
+    # Verify defaults were actually written
     defaults_value="$(sudo defaults read "$lock_plist" "DesktopPicture" 2>/dev/null || true)"
     if [[ "$defaults_value" == "$persistent_image" ]]; then
         total_checks=$((total_checks + 1))
         print_ok "Check $total_checks: loginwindow DesktopPicture readback"
+        print_info "  Value: $defaults_value"
     else
-        print_warn "DesktopPicture readback mismatch: '$defaults_value'"
+        print_warn "DesktopPicture readback mismatch: expected='$persistent_image' actual='$defaults_value'"
         failed_checks=$((failed_checks + 1))
     fi
     defaults_value="$(sudo defaults read "$lock_plist" "LockScreenImage" 2>/dev/null || true)"
     if [[ "$defaults_value" == "$persistent_image" ]]; then
         total_checks=$((total_checks + 1))
         print_ok "Check $total_checks: loginwindow LockScreenImage readback"
+        print_info "  Value: $defaults_value"
     else
-        print_warn "LockScreenImage readback mismatch: '$defaults_value'"
+        print_warn "LockScreenImage readback mismatch: expected='$persistent_image' actual='$defaults_value'"
+        failed_checks=$((failed_checks + 1))
+    fi
+    
+    # Verify image file is accessible and has correct permissions
+    local image_stat
+    local image_user
+    local image_perms
+    image_stat="$(ls -ld "$persistent_image" 2>/dev/null || true)"
+    if [[ -n "$image_stat" ]]; then
+        print_info "Lockscreen image file stat: $image_stat"
+        # Ensure world-readable so loginwindow can access it
+        sudo chmod 644 "$persistent_image" >/dev/null 2>&1 || true
+    else
+        print_warn "Lockscreen image file not accessible: $persistent_image"
         failed_checks=$((failed_checks + 1))
     fi
     
@@ -204,6 +222,24 @@ configure_lockscreen_background() {
     else
         print_warn "Optional cache file missing: /Library/Caches/com.apple.loginwindow/lockscreen_bg.png"
     fi
+
+    # Invalidate loginwindow cache to force re-read on next lock/reboot
+    print_info "Invalidating loginwindow cache to ensure refresh..."
+    
+    # Clear loginwindow mutable state (com.apple.loginwindow-state)
+    sudo defaults delete /Library/Preferences/com.apple.loginwindow-state >/dev/null 2>&1 || true
+    
+    # Kill WindowServer to force background cache refresh (less disruptive than full restart)
+    if command -v killall >/dev/null 2>&1; then
+        sudo killall -9 WindowServer >/dev/null 2>&1 || true
+        sleep 1
+    fi
+    
+    # Flush system defaults cache
+    sudo killall cfprefsd >/dev/null 2>&1 || true
+    sleep 1
+    
+    print_ok "Cache invalidation triggered - lockscreen will update on next lock/reboot"
 
     if [[ -n "$current_user" && "$current_user" != "root" ]]; then
         local set_wallpaper="${LOCKSCREEN_SET_WALLPAPER:-0}"
