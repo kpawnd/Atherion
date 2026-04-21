@@ -167,7 +167,6 @@ download_file_optimized() {
         --continue-at - \
         --compressed \
         --keepalive-time 60 \
-        --limit-output \
         --silent \
         --show-error \
         "$url" \
