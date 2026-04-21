@@ -248,18 +248,21 @@ configure_lockscreen_background() {
     echo "Cache invalidation completed without WindowServer restart" >> "$diag_log" 2>/dev/null || true
 
     if [[ -n "$current_user" && "$current_user" != "root" ]]; then
-        local set_wallpaper="${LOCKSCREEN_SET_WALLPAPER:-0}"
+        local set_wallpaper="${LOCKSCREEN_SET_WALLPAPER:-1}"
         if [[ "$set_wallpaper" == "1" ]]; then
-            print_info "LOCKSCREEN_SET_WALLPAPER=1 provided; applying desktop wallpaper too..."
+            print_info "Applying desktop wallpaper too (default mode)."
             if apply_wallpaper_for_user "$current_user" "$persistent_image"; then
                 total_checks=$((total_checks + 1))
                 print_ok "Check $total_checks: desktop wallpaper apply ($current_user)"
+                echo "Desktop wallpaper apply succeeded for $current_user" >> "$diag_log" 2>/dev/null || true
             else
                 print_warn "Could not update wallpaper in GUI session for $current_user"
+                echo "Desktop wallpaper apply failed for $current_user" >> "$diag_log" 2>/dev/null || true
                 failed_checks=$((failed_checks + 1))
             fi
         else
-            print_info "Desktop wallpaper unchanged (lockscreen-only mode)."
+            print_info "Desktop wallpaper unchanged (LOCKSCREEN_SET_WALLPAPER=0)."
+            echo "Desktop wallpaper skipped by LOCKSCREEN_SET_WALLPAPER=0" >> "$diag_log" 2>/dev/null || true
         fi
     fi
 
