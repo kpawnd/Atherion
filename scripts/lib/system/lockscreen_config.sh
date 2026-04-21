@@ -139,12 +139,27 @@ configure_lockscreen_background() {
         total_checks=$((total_checks + 1))
         print_ok "Check $total_checks: loginwindow DesktopPicture write"
     fi
+    if ! sudo defaults write "$lock_plist" "LockScreenImage" "$persistent_image" >/dev/null 2>&1; then
+        print_warn "Failed to set LockScreenImage via defaults"
+        failed_checks=$((failed_checks + 1))
+    else
+        total_checks=$((total_checks + 1))
+        print_ok "Check $total_checks: loginwindow LockScreenImage write"
+    fi
     defaults_value="$(sudo defaults read "$lock_plist" "DesktopPicture" 2>/dev/null || true)"
     if [[ "$defaults_value" == "$persistent_image" ]]; then
         total_checks=$((total_checks + 1))
         print_ok "Check $total_checks: loginwindow DesktopPicture readback"
     else
         print_warn "DesktopPicture readback mismatch: '$defaults_value'"
+        failed_checks=$((failed_checks + 1))
+    fi
+    defaults_value="$(sudo defaults read "$lock_plist" "LockScreenImage" 2>/dev/null || true)"
+    if [[ "$defaults_value" == "$persistent_image" ]]; then
+        total_checks=$((total_checks + 1))
+        print_ok "Check $total_checks: loginwindow LockScreenImage readback"
+    else
+        print_warn "LockScreenImage readback mismatch: '$defaults_value'"
         failed_checks=$((failed_checks + 1))
     fi
     
@@ -174,6 +189,14 @@ configure_lockscreen_background() {
 
     if [[ "$applied_any" -eq 0 ]]; then
         print_warn "No eligible local users found for lockscreen cache update."
+        failed_checks=$((failed_checks + 1))
+    fi
+
+    if [[ -f "/Library/Caches/com.apple.loginwindow/lockscreen_bg.png" ]]; then
+        total_checks=$((total_checks + 1))
+        print_ok "Check $total_checks: loginwindow cache file exists"
+    else
+        print_warn "loginwindow cache file missing: /Library/Caches/com.apple.loginwindow/lockscreen_bg.png"
         failed_checks=$((failed_checks + 1))
     fi
 

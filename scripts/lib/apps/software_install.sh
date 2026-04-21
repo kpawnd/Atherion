@@ -65,16 +65,35 @@ install_disabled_homebrew_package_local_override() {
 
     source_file="$(resolve_homebrew_package_file "$package_name" "$package_type")"
     if [[ -z "$source_file" ]]; then
-        print_warn "Could not locate local Homebrew definition for $package_name."
-        return 1
+        # Upstream cask may be removed/disabled. Create a local override for known packages.
+        if [[ "$package_type" == "cask" && "$package_name" == "azure-data-studio" ]]; then
+            mkdir -p "$override_root" || return 1
+            override_file="$override_root/${package_name}.rb"
+            cat > "$override_file" <<'EOF'
+cask "azure-data-studio" do
+  version :latest
+  sha256 :no_check
+
+  url "https://azuredatastudio-update.azurewebsites.net/latest/darwin/stable"
+  name "Azure Data Studio"
+  desc "Data management tool"
+  homepage "https://learn.microsoft.com/sql/azure-data-studio/"
+
+  app "Azure Data Studio.app"
+end
+EOF
+        else
+            print_warn "Could not locate local Homebrew definition for $package_name."
+            return 1
+        fi
+    else
+        mkdir -p "$override_root" || return 1
+        override_file="$override_root/${package_name}.rb"
+        cp "$source_file" "$override_file" || return 1
+
+        # Remove disable! guard so Homebrew can evaluate local override.
+        sed -E -i '' '/^[[:space:]]*disable![[:space:]].*$/d' "$override_file"
     fi
-
-    mkdir -p "$override_root" || return 1
-    override_file="$override_root/${package_name}.rb"
-    cp "$source_file" "$override_file" || return 1
-
-    # Remove disable! guard so Homebrew can evaluate local override.
-    sed -E -i '' '/^[[:space:]]*disable![[:space:]].*$/d' "$override_file"
 
     echo "Installing local override" > "$stage_file" 2>/dev/null || true
     if [[ "$package_type" == "cask" ]]; then
