@@ -42,6 +42,28 @@ apply_lockscreen_cache_for_user() {
     sudo cp "$image_path" "$cache_dir/lockscreen.jpg" 2>/dev/null || true
     sudo cp "$image_path" "/Library/Caches/com.apple.desktop.admin.png" 2>/dev/null || true
     sudo chmod 644 "$cache_dir/lockscreen.png" "$cache_dir/lockscreen.jpg" "/Library/Caches/com.apple.desktop.admin.png" >/dev/null 2>&1 || true
+    sudo chown root:wheel "$cache_dir/lockscreen.png" "$cache_dir/lockscreen.jpg" "/Library/Caches/com.apple.desktop.admin.png" >/dev/null 2>&1 || true
+
+    return 0
+}
+
+list_lockscreen_target_users() {
+    dscl . -list /Users UniqueID 2>/dev/null | awk '$2 >= 500 && $1 != "root" && $1 != "nobody" {print $1}'
+}
+
+verify_lockscreen_for_user() {
+    local target_user="$1"
+    local generated_uid
+    local cache_dir
+    local png_file
+
+    generated_uid="$(dscl . -read "/Users/$target_user" GeneratedUID 2>/dev/null | awk '{print $2}')"
+    [[ -n "$generated_uid" ]] || return 1
+
+    cache_dir="/Library/Caches/Desktop Pictures/$generated_uid"
+    png_file="$cache_dir/lockscreen.png"
+    [[ -f "$png_file" ]] || return 1
+    [[ -s "$png_file" ]] || return 1
 
     return 0
 }
@@ -52,6 +74,10 @@ configure_lockscreen_background() {
     local persistent_dir="/Library/Application Support/Atherion"
     local persistent_image="$persistent_dir/lockscreen_bg.png"
     local lock_plist="/Library/Preferences/com.apple.loginwindow"
+    local total_checks=0
+    local failed_checks=0
+    local defaults_value=""
+    local current_user
     
     print_info "Downloading lockscreen image..."
     
@@ -60,6 +86,8 @@ configure_lockscreen_background() {
         print_warn "Failed to download lockscreen image from $image_url"
         return 1
     fi
+    total_checks=$((total_checks + 1))
+    print_ok "Check $total_checks: image download"
     
     # Verify it's a valid image
     if ! file "$image_file" | grep -q "image"; then
@@ -67,6 +95,8 @@ configure_lockscreen_background() {
         rm -f "$image_file"
         return 1
     fi
+    total_checks=$((total_checks + 1))
+    print_ok "Check $total_checks: image validation"
 
     # Persist the image to a system path so settings survive script exit.
     if ! sudo mkdir -p "$persistent_dir"; then
@@ -80,6 +110,8 @@ configure_lockscreen_background() {
         return 1
     fi
     sudo chmod 644 "$persistent_image" >/dev/null 2>&1 || true
+    total_checks=$((total_checks + 1))
+    print_ok "Check $total_checks: persistent image write"
     
     # Check if SIP is disabled (OCLP system)
     local sip_enabled=true
@@ -102,29 +134,59 @@ configure_lockscreen_background() {
     # Set via defaults (Monterey-Sequoia compatible)
     if ! sudo defaults write "$lock_plist" "DesktopPicture" "$persistent_image" >/dev/null 2>&1; then
         print_warn "Failed to set login window background via defaults"
+        failed_checks=$((failed_checks + 1))
+    else
+        total_checks=$((total_checks + 1))
+        print_ok "Check $total_checks: loginwindow DesktopPicture write"
+    fi
+    defaults_value="$(sudo defaults read "$lock_plist" "DesktopPicture" 2>/dev/null || true)"
+    if [[ "$defaults_value" == "$persistent_image" ]]; then
+        total_checks=$((total_checks + 1))
+        print_ok "Check $total_checks: loginwindow DesktopPicture readback"
+    else
+        print_warn "DesktopPicture readback mismatch: '$defaults_value'"
+        failed_checks=$((failed_checks + 1))
     fi
     
     # Target user-specific lock screen cache.
     print_info "Applying lockscreen cache for active user..."
     
-    local current_user
     current_user="$(stat -f%Su /dev/console 2>/dev/null || whoami)"
-    
-    if [[ -n "$current_user" && "$current_user" != "root" ]]; then
-        if apply_lockscreen_cache_for_user "$current_user" "$persistent_image"; then
-            print_info "Lockscreen cache updated for user: $current_user"
+
+    local applied_any=0
+    while IFS= read -r target_user; do
+        [[ -n "$target_user" ]] || continue
+        if apply_lockscreen_cache_for_user "$target_user" "$persistent_image"; then
+            print_info "Lockscreen cache updated for user: $target_user"
+            if verify_lockscreen_for_user "$target_user"; then
+                total_checks=$((total_checks + 1))
+                print_ok "Check $total_checks: lockscreen cache verify ($target_user)"
+            else
+                print_warn "Lockscreen cache verify failed for user: $target_user"
+                failed_checks=$((failed_checks + 1))
+            fi
+            applied_any=1
         else
-            print_warn "Could not update lockscreen cache for $current_user"
+            print_warn "Could not update lockscreen cache for $target_user"
+            failed_checks=$((failed_checks + 1))
         fi
+    done < <(list_lockscreen_target_users)
 
+    if [[ "$applied_any" -eq 0 ]]; then
+        print_warn "No eligible local users found for lockscreen cache update."
+        failed_checks=$((failed_checks + 1))
+    fi
+
+    if [[ -n "$current_user" && "$current_user" != "root" ]]; then
         local set_wallpaper="${LOCKSCREEN_SET_WALLPAPER:-0}"
-
         if [[ "$set_wallpaper" == "1" ]]; then
             print_info "LOCKSCREEN_SET_WALLPAPER=1 provided; applying desktop wallpaper too..."
             if apply_wallpaper_for_user "$current_user" "$persistent_image"; then
-                print_info "Wallpaper updated for user: $current_user"
+                total_checks=$((total_checks + 1))
+                print_ok "Check $total_checks: desktop wallpaper apply ($current_user)"
             else
                 print_warn "Could not update wallpaper in GUI session for $current_user"
+                failed_checks=$((failed_checks + 1))
             fi
         else
             print_info "Desktop wallpaper unchanged (lockscreen-only mode)."
@@ -132,6 +194,12 @@ configure_lockscreen_background() {
     fi
 
     rm -f "$image_file"
+    print_info "Verification summary: passed=${total_checks} failed=${failed_checks}"
+    if [[ "$failed_checks" -gt 0 ]]; then
+        print_warn "Lockscreen/loginwindow update is partial. Review warnings above."
+        return 1
+    fi
+
     print_info "Best-effort lock-screen/loginwindow update saved. It applies on next lock screen/reboot without logging out current users."
     print_ok "Lockscreen/loginwindow update configured"
     return 0
