@@ -582,6 +582,16 @@ ensure_runtime_dependencies() {
         fi
     fi
 
+    # Install aria2 first so Homebrew uses it for parallel formula downloads.
+    if brew_is_healthy; then
+        if ! brew_cmd list --formula aria2 >/dev/null 2>&1; then
+            print_info "Installing download accelerator: aria2"
+            network_stage_update "aria2" "--" "estimating" "phase=brew-install"
+            HOMEBREW_NO_AUTO_UPDATE=1 brew_cmd install aria2 >/dev/null 2>&1 || \
+                print_warn "aria2 install failed; downloads will use single-connection curl"
+        fi
+    fi
+
     # Install monitoring stack used by sysmon wrapper (optional — failures are non-fatal).
     if brew_is_healthy; then
         if ! brew_cmd list --formula btop >/dev/null 2>&1; then

@@ -270,7 +270,7 @@ resolve_packet_tracer_dmg_url() {
     local dmg_url
 
     if [[ -n "$explicit_url" ]]; then
-        echo "$explicit_url"
+        normalize_download_url "$explicit_url"
         return 0
     fi
 

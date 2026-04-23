@@ -6,6 +6,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
 export PROJECT_ROOT
 
+# Source local overrides (URLs, tokens) — never committed.
+# Copy .env.example to .env and fill in values before running.
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/.env"
+fi
+
 # shellcheck source=scripts/lib/core/ui.sh
 source "$SCRIPT_DIR/scripts/lib/core/ui.sh"
 # shellcheck source=scripts/lib/core/runner.sh

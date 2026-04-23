@@ -130,6 +130,20 @@ download_file_resilient() {
     return 1
 }
 
+# Normalize download URL — appends download=1 for SharePoint sharing links.
+normalize_download_url() {
+    local url="$1"
+    if [[ "$url" == *"sharepoint.com"* ]] && [[ "$url" != *"download=1"* ]]; then
+        if [[ "$url" == *"?"* ]]; then
+            echo "${url}&download=1"
+        else
+            echo "${url}?download=1"
+        fi
+        return
+    fi
+    echo "$url"
+}
+
 # Optimized download using aria2c (parallel) if available, otherwise curl with connection pooling
 download_file_optimized() {
     local url="$1"
@@ -505,6 +519,101 @@ EOF
     return 0
 }
 
+# Get the download URL for a Homebrew cask from its JSON metadata.
+get_brew_cask_download_url() {
+    local token="$1"
+    local json
+
+    json="$(brew_cmd info --cask --json=v2 "$token" 2>/dev/null || true)"
+    if [[ -z "$json" ]]; then
+        echo ""
+        return 1
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        echo "$json" | python3 "$PY_LIB_DIR/brew_utils.py" cask-url
+    else
+        echo ""
+    fi
+}
+
+# Pre-fetch a Homebrew cask DMG into Homebrew's downloads cache using aria2c.
+# Homebrew computes its cache filename as sha256(url)--basename(url).
+# When brew finds the file there it skips the download and goes straight to install.
+prefetch_brew_cask() {
+    local token="$1"
+    local stage_file="${2:-}"
+    local url url_hash base cache_dir cache_file tmp_file brew_home
+
+    url="$(get_brew_cask_download_url "$token" 2>/dev/null || true)"
+    if [[ -z "$url" || "$url" == "null" ]]; then
+        return 1
+    fi
+
+    brew_home="${HOME}"
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        brew_home="$(eval echo "~${SUDO_USER}" 2>/dev/null || echo "/Users/${SUDO_USER}")"
+    fi
+    cache_dir="${brew_home}/Library/Caches/Homebrew/downloads"
+    mkdir -p "$cache_dir" 2>/dev/null || return 1
+
+    url_hash="$(printf '%s' "$url" | shasum -a 256 | awk '{print $1}')"
+    base="$(basename "$url")"
+    cache_file="${cache_dir}/${url_hash}--${base}"
+
+    if [[ -f "$cache_file" ]]; then
+        print_info "$token DMG already in Homebrew cache — skipping prefetch"
+        return 0
+    fi
+
+    # Remove any stale .incomplete file so aria2c starts fresh
+    rm -f "${cache_dir}"/*"${token}"*.incomplete 2>/dev/null || true
+
+    tmp_file="${cache_file}.prefetch-tmp"
+    rm -f "$tmp_file" 2>/dev/null || true
+
+    [[ -n "$stage_file" ]] && echo "Prefetching $token DMG" > "$stage_file"
+    print_info "Prefetching $token DMG with aria2c (16 connections)..."
+
+    local ok=0
+    if command -v aria2c >/dev/null 2>&1; then
+        aria2c \
+            --quiet=true \
+            --file-allocation=none \
+            --max-connection-per-server=16 \
+            --split=16 \
+            --continue=false \
+            --retry-wait=3 \
+            --max-tries=6 \
+            --summary-interval=0 \
+            --download-result=hide \
+            --enable-mmap=true \
+            --disk-cache=32M \
+            -o "$(basename "$tmp_file")" \
+            -d "$(dirname "$tmp_file")" \
+            "$url" >/dev/null 2>&1 && ok=1
+    fi
+
+    if [[ "$ok" -eq 0 ]]; then
+        curl --fail --location --retry 6 --retry-all-errors --retry-delay 2 \
+             --connect-timeout 15 --max-time 3600 --keepalive-time 60 \
+             --silent --show-error "$url" --output "$tmp_file" && ok=1
+    fi
+
+    if [[ "$ok" -eq 1 && -f "$tmp_file" ]]; then
+        local owner="${SUDO_USER:-$(whoami)}"
+        mv "$tmp_file" "$cache_file"
+        chown "$owner" "$cache_file" 2>/dev/null || true
+        chmod 644 "$cache_file" 2>/dev/null || true
+        print_ok "$token DMG prefetched into Homebrew cache"
+        return 0
+    fi
+
+    rm -f "$tmp_file" 2>/dev/null || true
+    print_warn "$token prefetch failed — Homebrew will download normally"
+    return 1
+}
+
 # Get Homebrew cask version
 get_brew_cask_version() {
     local token="$1"
@@ -628,6 +737,11 @@ reinstall_cask_app() {
             sudo rm -rf "$installed_path" 2>/dev/null || true
         fi
     fi
+
+    # Pre-fetch the cask DMG into Homebrew's cache with aria2c so the install step
+    # finds it already downloaded and skips Homebrew's slow single-connection download.
+    echo "Prefetching cask DMG" > "$stage_file" 2>/dev/null || true
+    prefetch_brew_cask "$token" "$stage_file" || true
 
     while [[ "$attempt" -le "$max_attempts" ]]; do
         resolve_brew_download_locks_for_token "$token" || true
