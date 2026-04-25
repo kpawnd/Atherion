@@ -531,7 +531,30 @@ install_homebrew() {
     print_info "Installing Homebrew..."
     network_stage_update "Homebrew" "--" "estimating" "phase=bootstrap"
     repair_homebrew_environment || true
-    if ! NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
+
+    # Download the installer as root, then run it as the original (sudo) user.
+    # Homebrew's install.sh explicitly refuses to run as root — it must execute
+    # under the user account that will own the Homebrew prefix.
+    local brew_install_script="/tmp/atherion-homebrew-install.sh"
+    local target_user target_home
+    target_user="$(resolve_target_user)"
+    target_home="$(resolve_target_home)"
+    if ! curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o "$brew_install_script" 2>/dev/null; then
+        print_err "Failed to download Homebrew install script."
+        return 1
+    fi
+    chmod 755 "$brew_install_script"
+
+    local brew_ok=0
+    if [[ "$EUID" -eq 0 && -n "$target_user" && "$target_user" != "root" ]]; then
+        sudo -u "$target_user" env HOME="$target_home" NONINTERACTIVE=1 /bin/bash "$brew_install_script" \
+            && brew_ok=1
+    else
+        NONINTERACTIVE=1 /bin/bash "$brew_install_script" && brew_ok=1
+    fi
+    rm -f "$brew_install_script"
+
+    if [[ "$brew_ok" -ne 1 ]]; then
         if resolve_brew_bin >/dev/null 2>&1; then
             print_warn "Homebrew install/update failed. Attempting shallow clone repair and retry."
             repair_homebrew_environment || true

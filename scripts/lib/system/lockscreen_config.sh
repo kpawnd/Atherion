@@ -156,6 +156,29 @@ for plist in \
     done
 done
 
+# Also try the system-level com.apple.desktop plist — loginwindow on some
+# Sequoia builds reads the system Background preference from here rather than
+# the loginwindow-specific plist.
+_plist_set_nested() {
+    local plist="$1" value="$2"
+    local dir
+    dir="$(/usr/bin/dirname "$plist")"
+    [[ -d "$dir" ]] || /bin/mkdir -p "$dir" 2>/dev/null || return 1
+    /usr/libexec/PlistBuddy \
+        -c "Set :Background:default:ImageFilePath ${value}" "$plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy \
+        -c "Add :Background dict" \
+        -c "Add :Background:default dict" \
+        -c "Add :Background:default:ImageFilePath string ${value}" \
+        -c "Add :Background:default:Change string Never" \
+        "$plist" 2>/dev/null
+}
+if _plist_set_nested "/Library/Preferences/com.apple.desktop.plist" "$IMAGE"; then
+    log "Set Background:default:ImageFilePath → com.apple.desktop.plist"
+else
+    log "FAILED to set com.apple.desktop.plist (may already be correct or unsupported)"
+fi
+
 # Per-user Desktop Pictures cache (per-user lock screen and switch-user panel).
 for cache_dir in "/Library/Caches/Desktop Pictures"/*/; do
     [[ -d "$cache_dir" ]] || continue
@@ -330,6 +353,21 @@ configure_lockscreen_background() {
         done
         [[ "$lw_wrote" -eq 1 ]] && print_info "loginwindow DB plist updated (Sequoia path)"
     fi
+
+    # Also write the system-level desktop background preference — loginwindow on
+    # some Sequoia builds reads from com.apple.desktop system plist rather than
+    # the loginwindow-specific domain.
+    local sys_desktop_plist="/Library/Preferences/com.apple.desktop.plist"
+    sudo /usr/libexec/PlistBuddy \
+        -c "Set :Background:default:ImageFilePath ${persistent_image}" "$sys_desktop_plist" >/dev/null 2>&1 \
+    || sudo /usr/libexec/PlistBuddy \
+        -c "Add :Background dict" \
+        -c "Add :Background:default dict" \
+        -c "Add :Background:default:ImageFilePath string ${persistent_image}" \
+        -c "Add :Background:default:Change string Never" \
+        "$sys_desktop_plist" >/dev/null 2>&1 \
+    || true
+    print_info "System desktop plist updated (com.apple.desktop)"
     
     # Verify defaults were actually written
     defaults_value="$(sudo defaults read "$lock_plist" "DesktopPicture" 2>/dev/null || true)"
