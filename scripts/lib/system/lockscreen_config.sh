@@ -122,25 +122,58 @@ install_lockscreen_boot_daemon() {
     sudo tee "$restore_script" >/dev/null <<'RESTORE_SCRIPT'
 #!/bin/bash
 IMAGE="/Library/Application Support/Atherion/lockscreen_bg.png"
-[[ -f "$IMAGE" ]] || exit 0
+LOG="/var/log/atherion-lockscreen-boot.log"
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG" 2>/dev/null || true; }
 
-# Restore loginwindow preferences so the custom image shows at boot.
-/usr/bin/defaults write /Library/Preferences/com.apple.loginwindow \
-    DesktopPicture "$IMAGE"
-/usr/bin/defaults write /Library/Preferences/com.apple.loginwindow \
-    LockScreenImage "$IMAGE"
+[[ -f "$IMAGE" ]] || { log "Image missing: $IMAGE"; exit 0; }
+log "apply-lockscreen starting (macOS $(/usr/bin/sw_vers -productVersion 2>/dev/null))"
 
-# Restore every per-user Desktop Pictures cache.
+# Write loginwindow background to every plist path macOS may consult.
+# On Sequoia (15+) loginwindow may read its own user-data directory at
+# /private/var/db/loginwindow rather than the system /Library/Preferences path.
+# PlistBuddy writes directly to the file, bypassing cfprefsd's write cache so
+# the value is on disk before loginwindow reads it — defaults write goes through
+# cfprefsd which may not flush in time on fast-boot Sequoia.
+_plist_set() {
+    local plist="$1" key="$2" value="$3"
+    local dir
+    dir="$(/usr/bin/dirname "$plist")"
+    [[ -d "$dir" ]] || /bin/mkdir -p "$dir" 2>/dev/null || return 1
+    /usr/libexec/PlistBuddy -c "Set :${key} ${value}" "$plist" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Add :${key} string ${value}" "$plist" 2>/dev/null \
+        || /usr/bin/defaults write "${plist%.plist}" "$key" "$value" 2>/dev/null
+}
+
+for plist in \
+    "/Library/Preferences/com.apple.loginwindow.plist" \
+    "/private/var/db/loginwindow/Library/Preferences/com.apple.loginwindow.plist"; do
+    for key in DesktopPicture LockScreenImage; do
+        if _plist_set "$plist" "$key" "$IMAGE"; then
+            log "Set $key → $plist"
+        else
+            log "FAILED to set $key → $plist"
+        fi
+    done
+done
+
+# Per-user Desktop Pictures cache (per-user lock screen and switch-user panel).
 for cache_dir in "/Library/Caches/Desktop Pictures"/*/; do
     [[ -d "$cache_dir" ]] || continue
     /bin/cp "$IMAGE" "${cache_dir}lockscreen.png" 2>/dev/null || true
     /bin/cp "$IMAGE" "${cache_dir}lockscreen.jpg" 2>/dev/null || true
     /bin/chmod 644 "${cache_dir}lockscreen.png" "${cache_dir}lockscreen.jpg" 2>/dev/null || true
 done
+log "Per-user cache restored"
 
-# Restore global admin cache.
+# Global admin cache (consulted by some macOS builds as the boot-screen fallback).
 /bin/cp "$IMAGE" "/Library/Caches/com.apple.desktop.admin.png" 2>/dev/null || true
 /bin/chmod 644 "/Library/Caches/com.apple.desktop.admin.png" 2>/dev/null || true
+
+# Signal cfprefsd to re-read plists; loginwindow may pick up the change
+# if it listens for preference-change notifications after startup.
+/usr/bin/killall cfprefsd 2>/dev/null || true
+
+log "apply-lockscreen done"
 RESTORE_SCRIPT
 
     sudo chmod 755 "$restore_script" >/dev/null 2>&1 || return 1
@@ -281,6 +314,21 @@ configure_lockscreen_background() {
     else
         total_checks=$((total_checks + 1))
         print_ok "Check $total_checks: loginwindow LockScreenImage write"
+    fi
+
+    # On Sequoia (15+) loginwindow reads its own user-data plist rather than the
+    # system /Library/Preferences path. Write there too using PlistBuddy so the
+    # value bypasses cfprefsd and is on disk immediately.
+    local lw_db_plist="/private/var/db/loginwindow/Library/Preferences/com.apple.loginwindow.plist"
+    if sudo mkdir -p "$(dirname "$lw_db_plist")" >/dev/null 2>&1; then
+        local lw_wrote=0
+        for key in DesktopPicture LockScreenImage; do
+            sudo /usr/libexec/PlistBuddy -c "Set :${key} ${persistent_image}" "$lw_db_plist" >/dev/null 2>&1 \
+                || sudo /usr/libexec/PlistBuddy -c "Add :${key} string ${persistent_image}" "$lw_db_plist" >/dev/null 2>&1 \
+                || true
+            lw_wrote=1
+        done
+        [[ "$lw_wrote" -eq 1 ]] && print_info "loginwindow DB plist updated (Sequoia path)"
     fi
     
     # Verify defaults were actually written
