@@ -13,10 +13,20 @@ apply_wallpaper_for_user() {
         return 1
     fi
 
-    launchctl asuser "$target_uid" sudo -u "$target_user" osascript \
-        -e 'tell application "System Events"' \
-        -e 'tell every desktop to set picture to POSIX file "'"$image_path"'"' \
-        -e 'end tell' >/dev/null 2>&1
+    # If the user has an active GUI session, update the wallpaper live via osascript.
+    if launchctl print "user/$target_uid" >/dev/null 2>&1; then
+        launchctl asuser "$target_uid" sudo -u "$target_user" osascript \
+            -e 'tell application "System Events"' \
+            -e 'tell every desktop to set picture to POSIX file "'"$image_path"'"' \
+            -e 'end tell' >/dev/null 2>&1
+        return $?
+    fi
+
+    # User is not currently logged in — write the preference directly so it
+    # applies when they next log in (Ventura-compatible legacy domain).
+    sudo -u "$target_user" defaults write com.apple.desktop Background \
+        -dict default -dict ImageFilePath "$image_path" Change Never \
+        >/dev/null 2>&1
 }
 
 apply_lockscreen_cache_for_user() {
@@ -76,7 +86,6 @@ configure_lockscreen_background() {
     local total_checks=0
     local failed_checks=0
     local defaults_value=""
-    local current_user
     
     : > "$diag_log"
     print_info "Diagnostics log: $diag_log"
@@ -194,14 +203,14 @@ configure_lockscreen_background() {
         failed_checks=$((failed_checks + 1))
     fi
     
-    # Target user-specific lock screen cache.
-    print_info "Applying lockscreen cache for active user..."
-    
-    current_user="$(stat -f%Su /dev/console 2>/dev/null || whoami)"
+    # Apply lockscreen cache and desktop wallpaper for every local user account.
+    print_info "Applying lockscreen and wallpaper for all users..."
 
+    local set_wallpaper="${LOCKSCREEN_SET_WALLPAPER:-1}"
     local applied_any=0
     while IFS= read -r target_user; do
         [[ -n "$target_user" ]] || continue
+
         if apply_lockscreen_cache_for_user "$target_user" "$persistent_image"; then
             print_info "Lockscreen cache updated for user: $target_user"
             if verify_lockscreen_for_user "$target_user"; then
@@ -215,6 +224,18 @@ configure_lockscreen_background() {
         else
             print_warn "Could not update lockscreen cache for $target_user"
             failed_checks=$((failed_checks + 1))
+        fi
+
+        if [[ "$set_wallpaper" == "1" ]]; then
+            if apply_wallpaper_for_user "$target_user" "$persistent_image"; then
+                total_checks=$((total_checks + 1))
+                print_ok "Check $total_checks: desktop wallpaper apply ($target_user)"
+                echo "Desktop wallpaper apply succeeded for $target_user" >> "$diag_log" 2>/dev/null || true
+            else
+                print_warn "Could not update wallpaper for $target_user"
+                echo "Desktop wallpaper apply failed for $target_user" >> "$diag_log" 2>/dev/null || true
+                failed_checks=$((failed_checks + 1))
+            fi
         fi
     done < <(list_lockscreen_target_users)
 
@@ -245,23 +266,9 @@ configure_lockscreen_background() {
     print_ok "Non-disruptive cache invalidation triggered - lockscreen updates on next lock/reboot"
     echo "Cache invalidation completed without WindowServer restart" >> "$diag_log" 2>/dev/null || true
 
-    if [[ -n "$current_user" && "$current_user" != "root" ]]; then
-        local set_wallpaper="${LOCKSCREEN_SET_WALLPAPER:-1}"
-        if [[ "$set_wallpaper" == "1" ]]; then
-            print_info "Applying desktop wallpaper too (default mode)."
-            if apply_wallpaper_for_user "$current_user" "$persistent_image"; then
-                total_checks=$((total_checks + 1))
-                print_ok "Check $total_checks: desktop wallpaper apply ($current_user)"
-                echo "Desktop wallpaper apply succeeded for $current_user" >> "$diag_log" 2>/dev/null || true
-            else
-                print_warn "Could not update wallpaper in GUI session for $current_user"
-                echo "Desktop wallpaper apply failed for $current_user" >> "$diag_log" 2>/dev/null || true
-                failed_checks=$((failed_checks + 1))
-            fi
-        else
-            print_info "Desktop wallpaper unchanged (LOCKSCREEN_SET_WALLPAPER=0)."
-            echo "Desktop wallpaper skipped by LOCKSCREEN_SET_WALLPAPER=0" >> "$diag_log" 2>/dev/null || true
-        fi
+    if [[ "${LOCKSCREEN_SET_WALLPAPER:-1}" != "1" ]]; then
+        print_info "Desktop wallpaper unchanged (LOCKSCREEN_SET_WALLPAPER=0)."
+        echo "Desktop wallpaper skipped by LOCKSCREEN_SET_WALLPAPER=0" >> "$diag_log" 2>/dev/null || true
     fi
 
     rm -f "$image_file"
